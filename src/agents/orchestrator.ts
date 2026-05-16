@@ -1,4 +1,4 @@
-import type { AgentConfig } from "@opencode-ai/sdk/v2";
+import type { AgentConfig } from '@opencode-ai/sdk/v2';
 
 export interface AgentDefinition {
   name: string;
@@ -17,7 +17,7 @@ export interface AgentDefinition {
 export function resolvePrompt(
   base: string,
   customPrompt?: string,
-  customAppendPrompt?: string
+  customAppendPrompt?: string,
 ): string {
   if (customPrompt) return customPrompt;
   if (customAppendPrompt) return `${base}\n\n${customAppendPrompt}`;
@@ -102,19 +102,19 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
 
 // Validation routing lines that reference agents
 const VALIDATION_ROUTING = [
-  "- Route UI/UX validation and review to @designer",
-  "- Route code review, simplification, maintainability review, and YAGNI checks to @oracle",
-  "- Route implementation to @fixer or multiple @fixer instances for maximum parallel execution",
-  "- Route visual/media analysis and interpretation to @observer",
-  "- If a request spans multiple lanes, delegate only the lanes that add clear value",
+  '- Route UI/UX validation and review to @designer',
+  '- Route code review, simplification, maintainability review, and YAGNI checks to @oracle',
+  '- Route implementation to @fixer or multiple @fixer instances for maximum parallel execution',
+  '- Route visual/media analysis and interpretation to @observer',
+  '- If a request spans multiple lanes, delegate only the lanes that add clear value',
 ];
 
 // Parallel delegation examples
 const PARALLEL_DELEGATION_EXAMPLES = [
-  "- Multiple @explorer searches across different domains?",
-  "- @explorer + @librarian research in parallel?",
-  "- Multiple @fixer instances for faster, scoped implementation?",
-  "- @observer + @explorer in parallel (visual analysis + code search)?",
+  '- Multiple @explorer searches across different domains?',
+  '- @explorer + @librarian research in parallel?',
+  '- Multiple @fixer instances for faster, scoped implementation?',
+  '- @observer + @explorer in parallel (visual analysis + code search)?',
 ];
 
 /**
@@ -127,14 +127,14 @@ export function buildOrchestratorPrompt(disabledAgents?: Set<string>): string {
   const enabledAgents = Object.entries(AGENT_DESCRIPTIONS)
     .filter(([name]) => !disabledAgents?.has(name))
     .map(([, desc]) => desc)
-    .join("\n\n");
+    .join('\n\n');
 
   // Filter validation routing lines — remove lines mentioning any disabled agent
   const enabledValidationRouting = VALIDATION_ROUTING.filter((line) => {
     const mentions = [...line.matchAll(/@(\w+)/g)].map((m) => m[1]);
     if (mentions.length === 0) return true;
     return mentions.every((name) => !disabledAgents?.has(name));
-  }).join("\n");
+  }).join('\n');
 
   // Filter parallel delegation examples — remove lines mentioning any disabled agent
   const enabledParallelExamples = PARALLEL_DELEGATION_EXAMPLES.filter(
@@ -142,8 +142,8 @@ export function buildOrchestratorPrompt(disabledAgents?: Set<string>): string {
       const mentions = [...line.matchAll(/@(\w+)/g)].map((m) => m[1]);
       if (mentions.length === 0) return true;
       return mentions.every((name) => !disabledAgents?.has(name));
-    }
-  ).join("\n");
+    },
+  ).join('\n');
 
   return `<Role>
 You are a workflow manager for coding work. Your job is to plan, schedule, delegate, monitor, reconcile, and verify specialist-agent work. You are not the default implementation worker.
@@ -278,15 +278,15 @@ export function createOrchestratorAgent(
   model?: string | Array<string | { id: string; variant?: string }>,
   customPrompt?: string,
   customAppendPrompt?: string,
-  disabledAgents?: Set<string>
+  disabledAgents?: Set<string>,
 ): AgentDefinition {
   const basePrompt = buildOrchestratorPrompt(disabledAgents);
   const prompt = resolvePrompt(basePrompt, customPrompt, customAppendPrompt);
 
   const definition: AgentDefinition = {
-    name: "orchestrator",
+    name: 'orchestrator',
     description:
-      "AI coding orchestrator that delegates tasks to specialist agents for optimal quality, speed, and cost",
+      'AI coding orchestrator that delegates tasks to specialist agents for optimal quality, speed, and cost',
     config: {
       temperature: 0.1,
       prompt,
@@ -295,9 +295,9 @@ export function createOrchestratorAgent(
 
   if (Array.isArray(model)) {
     definition._modelArray = model.map((m) =>
-      typeof m === "string" ? { id: m } : m
+      typeof m === 'string' ? { id: m } : m,
     );
-  } else if (typeof model === "string" && model) {
+  } else if (typeof model === 'string' && model) {
     definition.config.model = model;
   }
 

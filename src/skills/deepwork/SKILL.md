@@ -18,6 +18,8 @@ Required behavior:
 
 - keep OpenCode todos aligned with the active deepwork phase;
 - create and maintain a local markdown progress file under `.slim/deepwork/`;
+- write valuable research findings into that file as confirmed research context
+  when they are received and reconciled;
 - draft a plan before implementation;
 - ask `@oracle` to review the plan and revise it until acceptable;
 - create a phased implementation/delegation plan;
@@ -56,14 +58,19 @@ work. The file only needs to remain useful as persistent session state and shoul
 capture, as applicable:
 
 - current goal and understanding;
+- confirmed research context from `@librarian`, `@explorer`, docs, code reads,
+  or external references, including source links/paths when available;
 - assumptions, constraints, and decisions;
 - plan drafts and oracle review notes;
 - implementation phases and status;
 - validation results;
 - unresolved questions, blockers, and follow-ups.
 
-Update this file after major decisions, reviews, phase completions, validation
-results, and scope changes.
+Update this file after major decisions, valuable specialist research, reviews,
+phase completions, validation results, and scope changes. When `@librarian`,
+`@explorer`, docs, code reads, or external references produce useful information,
+reconcile the result and record the accepted findings here so later planning and
+reviews share the same context instead of rediscovering it.
 
 ## Scheduler Discipline
 
