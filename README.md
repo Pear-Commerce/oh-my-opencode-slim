@@ -17,6 +17,19 @@
   <p>
     <b>English</b> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.ja-JP.md">日本語</a> | <a href="README.ko-KR.md">한국어</a>
   </p>
+
+  <p><sub>✦ ✦ ✦</sub></p>
+
+## Support the Project 💖
+
+oh-my-opencode-slim is built and maintained in my spare time. If it helps you consider sponsoring my codex subscription.
+
+**Goal: $200/month**
+
+[![Sponsor](https://img.shields.io/github/sponsors/alvinunreal?style=for-the-badge&logo=GitHub-Sponsors&logoColor=EA4AAA&label=Sponsor)](https://github.com/sponsors/alvinunreal)
+
+See live progress + become a sponsor → [GitHub Sponsors](https://github.com/sponsors/alvinunreal)
+
 </div>
 
 ---
