@@ -1,5 +1,21 @@
 import { CUSTOM_SKILLS } from './custom-skills';
 
+function isOrchestratorClassName(agentName: string): boolean {
+  return agentName === 'orchestrator' || agentName.startsWith('orchestrator-');
+}
+
+function skillAllowedForAgent(
+  skill: { allowedAgents: string[] },
+  agentName: string,
+): boolean {
+  return (
+    skill.allowedAgents.includes('*') ||
+    skill.allowedAgents.includes(agentName) ||
+    (isOrchestratorClassName(agentName) &&
+      skill.allowedAgents.includes('orchestrator'))
+  );
+}
+
 /**
  * A skill that is managed externally (e.g. user-installed) and needs
  * permission grants but is NOT installed by this plugin's CLI.
@@ -38,7 +54,7 @@ export function getSkillPermissionsForAgent(
 ): Record<string, 'allow' | 'ask' | 'deny'> {
   // Orchestrator gets all skills by default, others are restricted
   const permissions: Record<string, 'allow' | 'ask' | 'deny'> = {
-    '*': agentName === 'orchestrator' ? 'allow' : 'deny',
+    '*': isOrchestratorClassName(agentName) ? 'allow' : 'deny',
   };
 
   // If the user provided an explicit skill list (even empty), honor it
@@ -58,9 +74,7 @@ export function getSkillPermissionsForAgent(
 
   // Apply permissions from bundled custom skills
   for (const skill of CUSTOM_SKILLS) {
-    const isAllowed =
-      skill.allowedAgents.includes('*') ||
-      skill.allowedAgents.includes(agentName);
+    const isAllowed = skillAllowedForAgent(skill, agentName);
     if (isAllowed) {
       permissions[skill.name] = 'allow';
     }
@@ -68,9 +82,7 @@ export function getSkillPermissionsForAgent(
 
   // Apply permissions for externally-managed skills (not installed by this plugin)
   for (const skill of PERMISSION_ONLY_SKILLS) {
-    const isAllowed =
-      skill.allowedAgents.includes('*') ||
-      skill.allowedAgents.includes(agentName);
+    const isAllowed = skillAllowedForAgent(skill, agentName);
     if (isAllowed) {
       permissions[skill.name] = 'allow';
     }

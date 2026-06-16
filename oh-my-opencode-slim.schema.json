@@ -85,6 +85,10 @@
               "type": "string",
               "minLength": 1
             },
+            "orchestrator_class": {
+              "description": "When true on a custom agent, register it as an orchestrator-class primary agent with orchestrator prompt, permissions, skills, and hooks.",
+              "type": "boolean"
+            },
             "options": {
               "type": "object",
               "propertyNames": {
@@ -168,6 +172,10 @@
           "orchestratorPrompt": {
             "type": "string",
             "minLength": 1
+          },
+          "orchestrator_class": {
+            "description": "When true on a custom agent, register it as an orchestrator-class primary agent with orchestrator prompt, permissions, skills, and hooks.",
+            "type": "boolean"
           },
           "options": {
             "type": "object",

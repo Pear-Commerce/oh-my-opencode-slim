@@ -9,6 +9,7 @@ import {
   getAcpAgentNames,
   getAgentOverride,
   getCustomAgentNames,
+  isOrchestratorClassAgent,
   loadAgentPrompt,
   type PluginConfig,
   PROTECTED_AGENTS,
@@ -39,7 +40,6 @@ type AgentFactory = (
 ) => AgentDefinition;
 
 const COUNCIL_TOOL_ALLOWED_AGENTS = new Set(['council']);
-const CANCEL_TASK_ALLOWED_AGENTS = new Set(['orchestrator']);
 const SAFE_AGENT_ALIAS_RE = /^[a-z][a-z0-9_-]*$/i;
 
 function normalizeDisplayName(displayName: string): string {
@@ -210,6 +210,7 @@ function injectDisplayNames(
 function applyDefaultPermissions(
   agent: AgentDefinition,
   configuredSkills?: string[],
+  config?: PluginConfig,
 ): void {
   const existing = (agent.config.permission ?? {}) as Record<
     string,
@@ -227,7 +228,7 @@ function applyDefaultPermissions(
   const councilSessionPerm = COUNCIL_TOOL_ALLOWED_AGENTS.has(agent.name)
     ? (existing.council_session ?? 'allow')
     : 'deny';
-  const cancelTaskPerm = CANCEL_TASK_ALLOWED_AGENTS.has(agent.name)
+  const cancelTaskPerm = isOrchestratorClassAgent(config, agent.name)
     ? (existing.cancel_task ?? 'allow')
     : 'deny';
 
@@ -326,6 +327,7 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
       return true;
     });
 
+  const protoCustomOrchestrators: AgentDefinition[] = [];
   const protoCustomAgents = customAgentNames.flatMap((name) => {
     const override = getAgentOverride(config, name);
     if (!hasCustomAgentModel(override)) {
@@ -336,6 +338,21 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
     }
 
     const customPrompts = loadAgentPrompt(name, config?.preset);
+
+    if (override.orchestrator_class === true) {
+      const agent = createOrchestratorAgent(
+        override.model,
+        override.prompt ?? customPrompts.prompt,
+        customPrompts.appendPrompt,
+        disabled,
+      );
+      agent.name = name;
+      agent.description =
+        agent.description ??
+        `Orchestrator-class workflow manager '${name}'`;
+      protoCustomOrchestrators.push(agent);
+      return [];
+    }
 
     return [
       buildCustomAgentDefinition(
@@ -381,7 +398,7 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
     if (override) {
       applyOverrides(agent, override);
     }
-    applyDefaultPermissions(agent, override?.skills);
+    applyDefaultPermissions(agent, override?.skills, config);
     return agent;
   });
 
@@ -405,12 +422,21 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
     if (override) {
       applyOverrides(agent, override);
     }
-    applyDefaultPermissions(agent, override?.skills);
+    applyDefaultPermissions(agent, override?.skills, config);
+    return agent;
+  });
+
+  const customOrchestrators = protoCustomOrchestrators.map((agent) => {
+    const override = getAgentOverride(config, agent.name);
+    if (override) {
+      applyOverrides(agent, override);
+    }
+    applyDefaultPermissions(agent, override?.skills, config);
     return agent;
   });
 
   const acpSubAgents = protoAcpAgents.map((agent) => {
-    applyDefaultPermissions(agent);
+    applyDefaultPermissions(agent, undefined, config);
     return agent;
   });
 
@@ -433,7 +459,7 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
     orchestratorPrompts.appendPrompt,
     disabled,
   );
-  applyDefaultPermissions(orchestrator, orchestratorOverride?.skills);
+  applyDefaultPermissions(orchestrator, orchestratorOverride?.skills, config);
   if (orchestratorOverride) {
     applyOverrides(orchestrator, orchestratorOverride);
   }
@@ -443,7 +469,7 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
   if (orchestrator.displayName) {
     displayNameMap.set('orchestrator', orchestrator.displayName);
   }
-  for (const agent of allSubAgents) {
+  for (const agent of [...customOrchestrators, ...allSubAgents]) {
     if (agent.displayName) {
       displayNameMap.set(agent.name, agent.displayName);
     }
@@ -499,7 +525,9 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
   }
 
   // Inject display names into orchestrator prompt (complete map)
-  injectDisplayNames(orchestrator, displayNameMap);
+  for (const primaryOrchestrator of [orchestrator, ...customOrchestrators]) {
+    injectDisplayNames(primaryOrchestrator, displayNameMap);
+  }
 
   const extraOrchestratorPrompts = [
     ...customOrchestratorPrompts,
@@ -518,12 +546,13 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
       return text;
     });
 
-    orchestrator.config.prompt = `${orchestrator.config.prompt}\n\n${rewrittenPrompts.join(
-      '\n\n',
-    )}`;
+    const extraPrompt = rewrittenPrompts.join('\n\n');
+    for (const primaryOrchestrator of [orchestrator, ...customOrchestrators]) {
+      primaryOrchestrator.config.prompt = `${primaryOrchestrator.config.prompt}\n\n${extraPrompt}`;
+    }
   }
 
-  return [orchestrator, ...allSubAgents];
+  return [orchestrator, ...customOrchestrators, ...allSubAgents];
 }
 
 /**
@@ -554,10 +583,10 @@ export function getAgentConfigs(
       // Internal agent — subagent mode, hidden from @ autocomplete
       sdkConfig.mode = 'subagent';
       sdkConfig.hidden = true;
+    } else if (isOrchestratorClassAgent(config, name)) {
+      sdkConfig.mode = 'primary';
     } else if (isSubagent(name)) {
       sdkConfig.mode = 'subagent';
-    } else if (name === 'orchestrator') {
-      sdkConfig.mode = 'primary';
     } else {
       sdkConfig.mode = 'subagent';
     }

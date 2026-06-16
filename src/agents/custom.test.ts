@@ -53,6 +53,42 @@ describe('custom-agent creation', () => {
     );
   });
 
+  test('creates orchestrator-class custom agents as primary workflow managers', () => {
+    const config: PluginConfig = {
+      agents: {
+        'orchestrator-kimi-xhigh': {
+          orchestrator_class: true,
+          model: 'fireworks-ai/accounts/fireworks/models/kimi-k2p7-code',
+          variant: 'xhigh',
+          skills: ['*'],
+          mcps: ['*', '!context7'],
+        },
+      },
+    };
+
+    const agents = createAgents(config);
+    const custom = agents.find(
+      (agent) => agent.name === 'orchestrator-kimi-xhigh',
+    );
+    expect(custom).toBeDefined();
+    expect(custom?.config.model).toBe(
+      'fireworks-ai/accounts/fireworks/models/kimi-k2p7-code',
+    );
+    expect(custom?.config.variant).toBe('xhigh');
+    expect(custom?.config.temperature).toBe(0.1);
+    expect(String(custom?.config.prompt)).toContain('<Role>');
+    expect(String(custom?.config.prompt)).toContain('<Agents>');
+    expect(custom?.config.permission?.cancel_task).toBe('allow');
+    expect(custom?.config.permission?.skill).toEqual({ '*': 'allow' });
+
+    const sdkConfigs = getAgentConfigs(config);
+    expect(sdkConfigs['orchestrator-kimi-xhigh'].mode).toBe('primary');
+    expect(sdkConfigs['orchestrator-kimi-xhigh'].mcps).toEqual([
+      '*',
+      '!context7',
+    ]);
+  });
+
   test('skips custom agents without a model', () => {
     const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
 

@@ -80,6 +80,12 @@ export const AgentOverrideConfigSchema = z
     mcps: z.array(z.string()).optional(), // MCPs this agent can use ("*" = all, "!item" = exclude)
     prompt: z.string().min(1).optional(),
     orchestratorPrompt: z.string().min(1).optional(),
+    orchestrator_class: z
+      .boolean()
+      .optional()
+      .describe(
+        'When true on a custom agent, register it as an orchestrator-class primary agent with orchestrator prompt, permissions, skills, and hooks.',
+      ),
     options: z.record(z.string(), z.unknown()).optional(), // provider-specific model options (e.g., textVerbosity, thinking budget)
     displayName: z.string().min(1).optional(),
   })

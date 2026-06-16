@@ -654,7 +654,11 @@ export function createTaskSessionManagerHook(
     ): Promise<void> => {
       for (const [messageIndex, message] of output.messages.entries()) {
         if (message.info.role !== 'user') continue;
-        if (message.info.agent && message.info.agent !== 'orchestrator') {
+        if (
+          message.info.agent &&
+          message.info.agent !== 'orchestrator' &&
+          !message.info.agent.startsWith('orchestrator-')
+        ) {
           continue;
         }
         if (
@@ -672,7 +676,11 @@ export function createTaskSessionManagerHook(
       for (let i = output.messages.length - 1; i >= 0; i -= 1) {
         const message = output.messages[i];
         if (message.info.role !== 'user') continue;
-        if (message.info.agent && message.info.agent !== 'orchestrator') return;
+        if (
+          message.info.agent &&
+          message.info.agent !== 'orchestrator' &&
+          !message.info.agent.startsWith('orchestrator-')
+        ) return;
         if (
           !message.info.sessionID ||
           !options.shouldManageSession(message.info.sessionID)

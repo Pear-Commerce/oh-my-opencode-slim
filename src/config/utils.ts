@@ -44,3 +44,24 @@ export function getCustomAgentNames(
 export function getAcpAgentNames(config: PluginConfig | undefined): string[] {
   return Object.keys(config?.acpAgents ?? {});
 }
+
+export function isOrchestratorClassAgent(
+  config: PluginConfig | undefined,
+  name: string | undefined | null,
+): boolean {
+  if (!name) return false;
+  if (name === 'orchestrator') return true;
+  return config?.agents?.[name]?.orchestrator_class === true;
+}
+
+export function getOrchestratorClassAgentNames(
+  config: PluginConfig | undefined,
+): Set<string> {
+  const names = new Set<string>(['orchestrator']);
+  for (const [name, override] of Object.entries(config?.agents ?? {})) {
+    if (override.orchestrator_class === true) {
+      names.add(name);
+    }
+  }
+  return names;
+}

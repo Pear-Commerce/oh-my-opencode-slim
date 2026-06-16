@@ -6,6 +6,7 @@ import { ensureCompanionVersion } from './companion/updater';
 import {
   type AgentOverrideConfig,
   deepMerge,
+  isOrchestratorClassAgent,
   loadPluginConfig,
   type MultiplexerConfig,
 } from './config';
@@ -273,7 +274,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     // Initialize post-file-tool nudge hook
     postFileToolNudgeHook = createPostFileToolNudgeHook({
       shouldInject: (sessionID) =>
-        sessionAgentMap.get(sessionID) === 'orchestrator',
+        isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
     });
 
     chatHeadersHook = createChatHeadersHook(ctx);
@@ -301,7 +302,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       readContextMaxFiles: config.backgroundJobs?.readContextMaxFiles ?? 8,
       backgroundJobBoard,
       shouldManageSession: (sessionID) =>
-        sessionAgentMap.get(sessionID) === 'orchestrator',
+        isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
     });
     interviewManager = createInterviewManager(ctx, config);
     presetManager = createPresetManager(ctx, config);
@@ -314,7 +315,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       client: ctx.client,
       backgroundJobBoard,
       shouldManageSession: (sessionID) =>
-        sessionAgentMap.get(sessionID) === 'orchestrator',
+        isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
     });
 
     toolCount =
@@ -920,7 +921,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       const agentName = input.sessionID
         ? sessionAgentMap.get(input.sessionID)
         : undefined;
-      if (agentName === 'orchestrator') {
+      if (isOrchestratorClassAgent(config, agentName)) {
         const alreadyInjected = output.system.some(
           (s) =>
             typeof s === 'string' &&
@@ -934,9 +935,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           // / orchestrator_append.md) Fall back to
           // buildOrchestratorPrompt only if the resolved prompt is
           // missing.
-          const orchestratorDef = agentDefs.find(
-            (a) => a.name === 'orchestrator',
-          );
+          const orchestratorDef = agentDefs.find((a) => a.name === agentName);
           const orchestratorPrompt =
             typeof orchestratorDef?.config?.prompt === 'string'
               ? orchestratorDef.config.prompt

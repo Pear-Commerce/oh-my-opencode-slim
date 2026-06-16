@@ -181,7 +181,7 @@ export class CompanionManager {
     const { sessionId, agent, status } = input;
     if (!sessionId || (status !== 'busy' && status !== 'idle')) return;
 
-    if (agent === 'orchestrator') {
+    if (agent === 'orchestrator' || agent?.startsWith('orchestrator-')) {
       // Orchestrator going idle does NOT clear specialists: with background
       // orchestration it idles while dispatched agents are still running.
       // Specialists are removed only by their own idle/deleted events.

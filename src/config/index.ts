@@ -10,4 +10,6 @@ export {
   getAcpAgentNames,
   getAgentOverride,
   getCustomAgentNames,
+  getOrchestratorClassAgentNames,
+  isOrchestratorClassAgent,
 } from './utils';
