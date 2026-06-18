@@ -680,7 +680,8 @@ export function createTaskSessionManagerHook(
           message.info.agent &&
           message.info.agent !== 'orchestrator' &&
           !message.info.agent.startsWith('orchestrator-')
-        ) return;
+        )
+          return;
         if (
           !message.info.sessionID ||
           !options.shouldManageSession(message.info.sessionID)

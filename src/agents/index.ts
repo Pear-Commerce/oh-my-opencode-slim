@@ -348,8 +348,7 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
       );
       agent.name = name;
       agent.description =
-        agent.description ??
-        `Orchestrator-class workflow manager '${name}'`;
+        agent.description ?? `Orchestrator-class workflow manager '${name}'`;
       protoCustomOrchestrators.push(agent);
       return [];
     }
