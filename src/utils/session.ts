@@ -64,7 +64,10 @@ export type PromptBody = {
   noReply?: boolean;
   system?: string;
   tools?: { [key: string]: boolean };
-  parts: Array<{ type: 'text'; text: string }>;
+  parts: Array<
+    | { type: 'text'; text: string }
+    | { type: 'file'; mime: string; filename?: string; url: string }
+  >;
   variant?: string;
 };
 

@@ -19,6 +19,7 @@ orchestration system that runs consensus across multiple models.
 **Usage**:
 1. Call the \`council_session\` tool with the user's prompt
 2. Optionally specify a preset (default: "default")
+2b. If the user's prompt references uploaded files by their saved disk path (paths under \`.opencode/uploads/\`), pass those paths via the \`files\` arg of \`council_session\` so each councillor receives the file as a native attachment.
 3. Receive the councillor responses formatted for synthesis
 4. Follow the Synthesis Process below
 5. Present the result to the user
@@ -175,4 +176,72 @@ export function formatCouncillorResults(
     '\n\n---\n\nYou MUST follow the Synthesis Process steps before producing output: review each councillor response individually, then produce the required output with a synthesized Council Response, per-councillor details using their exact names, and a Council Summary with consensus confidence rating (unanimous, majority, or split).';
 
   return prompt;
+}
+
+/**
+ * Build a verbatim `## Councillor Details` section from raw councillor
+ * results. Used by the council-details hook to deterministically
+ * re-append per-councillor responses when the council agent omits or
+ * trims them from its final message.
+ *
+ * Each councillor is rendered as a `### <name> (<model>)` subsection
+ * containing its full response text (or a status line on failure). No
+ * summarization or paraphrasing — the raw `result` string is used as-is.
+ */
+export function formatCouncillorDetailsSection(
+  councillorResults: Array<{
+    name: string;
+    model: string;
+    status: string;
+    result?: string;
+    error?: string;
+  }>,
+): string {
+  const sections = councillorResults
+    .map((cr) => {
+      const shortModel = shortModelLabel(cr.model);
+      if (cr.status === 'completed' && cr.result) {
+        return `### ${cr.name} (${shortModel})\n${cr.result}`;
+      }
+      return `### ${cr.name} (${shortModel})\n**${cr.status}** — ${
+        cr.error ?? 'Unknown'
+      }`;
+    })
+    .join('\n\n');
+
+  return `## Councillor Details (verbatim)\n\n${sections}`;
+}
+
+/**
+ * Check whether an output string already contains a complete
+ * `## Councillor Details` section covering every completed councillor.
+ *
+ * "Complete" means:
+ *   1. A `## Councillor Details` header is present, AND
+ *   2. Every councillor with status `completed` (and a non-empty result)
+ *      is referenced by name within that section.
+ *
+ * Returns true when the section is complete (no re-append needed).
+ */
+export function hasCompleteCouncillorDetails(
+  output: string,
+  councillorResults: Array<{ name: string; status: string; result?: string }>,
+): boolean {
+  const detailsHeader = /##\s*Councillor Details/i;
+  if (!detailsHeader.test(output)) return false;
+
+  const completed = councillorResults.filter(
+    (cr) => cr.status === 'completed' && cr.result,
+  );
+  if (completed.length === 0) return true;
+
+  // Each completed councillor name must appear somewhere in the output.
+  // We check the whole output rather than strictly between headers so
+  // that minor formatting variations by the council agent don't cause
+  // false negatives — the goal is "did the user see who said what".
+  return completed.every((cr) => {
+    // Escape regex metacharacters in the councillor name.
+    const escaped = cr.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(escaped).test(output);
+  });
 }

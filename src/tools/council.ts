@@ -39,6 +39,8 @@ export function createCouncilTool(
 
 Sends the prompt to multiple models (councillors) in parallel and returns their formatted responses for you to synthesize.
 
+Uploaded files can be passed to every councillor via the \`files\` arg — each path is read from disk and attached as a native file part so each councillor can see its contents.
+
 Returns the councillor responses with a summary footer.`,
     args: {
       prompt: z.string().describe('The prompt to send to all councillors'),
@@ -47,6 +49,12 @@ Returns the councillor responses with a summary footer.`,
         .optional()
         .describe(
           'Council preset to use (default: "default"). Must match a preset in the council config.',
+        ),
+      files: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'File paths to attach to every councillor session. Each file is read from disk and attached as a native file part so each councillor can see its contents. Use this when the user uploaded files for the council to consider.',
         ),
     },
     async execute(args, toolContext) {
@@ -70,12 +78,16 @@ Returns the councillor responses with a summary footer.`,
 
       const prompt = String(args.prompt);
       const preset = typeof args.preset === 'string' ? args.preset : undefined;
+      const files = Array.isArray(args.files)
+        ? args.files.map(String)
+        : undefined;
       const parentSessionId = (toolContext as { sessionID: string }).sessionID;
 
       const result = await councilManager.runCouncil(
         prompt,
         preset,
         parentSessionId,
+        files,
       );
 
       if (!result.success) {

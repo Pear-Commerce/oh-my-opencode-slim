@@ -99,6 +99,23 @@ describe('council_session tool', () => {
       expect(tools.council_session.args.preset).toBeDefined();
       expect(tools.council_session.args).toHaveProperty('preset');
     });
+
+    test('defines optional files argument as array of strings', () => {
+      const ctx = createMockPluginContext();
+      const councilManager = createMockCouncilManager();
+      const tools = createCouncilTool(ctx, councilManager);
+
+      expect(tools.council_session.args.files).toBeDefined();
+      expect(tools.council_session.args).toHaveProperty('files');
+    });
+
+    test('description mentions the files arg for uploaded files', () => {
+      const ctx = createMockPluginContext();
+      const councilManager = createMockCouncilManager();
+      const tools = createCouncilTool(ctx, councilManager);
+
+      expect(tools.council_session.description).toContain('files');
+    });
   });
 
   describe('execute', () => {
@@ -120,6 +137,7 @@ describe('council_session tool', () => {
         'Test prompt',
         'custom',
         'test-session-123',
+        undefined,
       );
     });
 
@@ -136,6 +154,45 @@ describe('council_session tool', () => {
         'Test prompt',
         undefined,
         'test-session-123',
+        undefined,
+      );
+    });
+
+    test('passes files through to runCouncil as the 4th arg', async () => {
+      const ctx = createMockPluginContext();
+      const councilManager = createMockCouncilManager();
+      const tools = createCouncilTool(ctx, councilManager);
+
+      await tools.council_session.execute(
+        { prompt: 'Test', files: ['/some/path.png'] },
+        { sessionID: 's1', agent: 'council' } as any,
+      );
+
+      expect(councilManager.runCouncil).toHaveBeenCalledTimes(1);
+      expect(councilManager.runCouncil).toHaveBeenCalledWith(
+        'Test',
+        undefined,
+        's1',
+        ['/some/path.png'],
+      );
+    });
+
+    test('coerces files entries to strings', async () => {
+      const ctx = createMockPluginContext();
+      const councilManager = createMockCouncilManager();
+      const tools = createCouncilTool(ctx, councilManager);
+
+      await tools.council_session.execute(
+        // Non-string entries get coerced via .map(String)
+        { prompt: 'Test', files: [123, true] as any },
+        { sessionID: 's1', agent: 'council' } as any,
+      );
+
+      expect(councilManager.runCouncil).toHaveBeenCalledWith(
+        'Test',
+        undefined,
+        's1',
+        ['123', 'true'],
       );
     });
 
@@ -268,6 +325,7 @@ describe('council_session tool', () => {
         '12345',
         undefined,
         'test',
+        undefined,
       );
     });
 
@@ -285,6 +343,7 @@ describe('council_session tool', () => {
         'Test',
         undefined,
         'test',
+        undefined,
       );
     });
   });

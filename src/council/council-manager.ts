@@ -5,6 +5,8 @@
  * parallel and collects their results for the council agent to synthesize.
  */
 
+import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import type { PluginInput } from '@opencode-ai/plugin';
 import {
   formatCouncillorPrompt,
@@ -29,8 +31,69 @@ import type { SubagentDepthTracker } from '../utils/subagent-depth';
 type OpencodeClient = PluginInput['client'];
 
 // ---------------------------------------------------------------------------
+// File attachment helper
+// ---------------------------------------------------------------------------
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  txt: 'text/plain',
+  json: 'application/json',
+  csv: 'text/csv',
+  md: 'text/markdown',
+  html: 'text/html',
+  xml: 'application/xml',
+  zip: 'application/zip',
+};
+
+/**
+ * Read a file from disk and build a native file part (data URL) for the
+ * session prompt body. Returns null if the file can't be read — never throws.
+ */
+function buildFilePart(filePath: string): {
+  type: 'file';
+  mime: string;
+  filename: string;
+  url: string;
+} | null {
+  try {
+    const bytes = readFileSync(filePath);
+    const ext = (filePath.split('.').pop() ?? '').toLowerCase();
+    const mime = MIME_BY_EXTENSION[ext] ?? 'application/octet-stream';
+    const b64 = Buffer.from(bytes).toString('base64');
+    return {
+      type: 'file',
+      mime,
+      filename: basename(filePath),
+      url: `data:${mime};base64,${b64}`,
+    };
+  } catch (error) {
+    log('[council-manager] Failed to read file for councillor attachment', {
+      filePath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // CouncilManager
 // ---------------------------------------------------------------------------
+
+type StashedResults = {
+  results: CouncilResult['councillorResults'];
+  timestamp: number;
+};
+
+// Upper bound on retained stashes. Each entry holds the raw councillor
+// responses for one council session, so we cap to avoid unbounded growth
+// under heavy use. Eviction is oldest-first.
+const MAX_STASHED_SESSIONS = 50;
 
 export class CouncilManager {
   private client: OpencodeClient;
@@ -40,6 +103,15 @@ export class CouncilManager {
   private tmuxEnabled: boolean;
   private deprecatedFields?: string[];
   private legacyMasterModel?: string;
+
+  /**
+   * Stashes the raw councillor results from the most recent `runCouncil`
+   * call, keyed by the council agent session ID (the `parentSessionId`
+   * passed to `runCouncil`). Consumed by the council-details hook to
+   * deterministically re-append verbatim per-councillor details if the
+   * council agent trimmed them from its final message.
+   */
+  private stashByCouncilSession = new Map<string, StashedResults>();
 
   constructor(
     ctx: PluginInput,
@@ -67,6 +139,65 @@ export class CouncilManager {
   }
 
   /**
+   * Retrieve stashed councillor results for a council agent session.
+   * Returns undefined when no stash exists (e.g. session never ran a
+   * council, or stash was already consumed/cleared).
+   */
+  getStash(councilAgentSessionId: string): StashedResults | undefined {
+    return this.stashByCouncilSession.get(councilAgentSessionId);
+  }
+
+  /**
+   * Find the most recently stashed council results whose council agent
+   * session is a child of `parentSessionId`. Used by the council-details
+   * hook to correlate a `task` tool call (parent = orchestrator) with the
+   * council agent session it spawned, without requiring opencode to expose
+   * the child session ID on the task tool output.
+   *
+   * `childToParent` is the plugin-level session.parent map maintained on
+   * `session.created` events.
+   */
+  getStashByParent(
+    parentSessionId: string,
+    childToParent: Map<string, string>,
+  ): { councilAgentSessionId: string; results: StashedResults } | undefined {
+    let best:
+      | { councilAgentSessionId: string; results: StashedResults }
+      | undefined;
+    for (const [sessionId, results] of this.stashByCouncilSession) {
+      if (childToParent.get(sessionId) !== parentSessionId) continue;
+      if (!best || results.timestamp > best.results.timestamp) {
+        best = { councilAgentSessionId: sessionId, results };
+      }
+    }
+    return best;
+  }
+
+  /** Remove a stashed entry (e.g. after the details hook consumed it). */
+  clearStash(councilAgentSessionId: string): void {
+    this.stashByCouncilSession.delete(councilAgentSessionId);
+  }
+
+  /**
+   * Stash councillor results keyed by the council agent session. Evicts
+   * the oldest entry when the cap is reached.
+   */
+  private stashResults(
+    councilAgentSessionId: string,
+    results: CouncilResult['councillorResults'],
+  ): void {
+    if (this.stashByCouncilSession.size >= MAX_STASHED_SESSIONS) {
+      // Map iteration is insertion-ordered; first entry is oldest.
+      const oldest = this.stashByCouncilSession.keys().next().value;
+      if (oldest !== undefined) this.stashByCouncilSession.delete(oldest);
+    }
+    this.stashByCouncilSession.set(councilAgentSessionId, {
+      results,
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
    * Run a full council session.
    *
    * 1. Look up the preset
@@ -78,6 +209,7 @@ export class CouncilManager {
     prompt: string,
     presetName: string | undefined,
     parentSessionId: string,
+    files?: string[],
   ): Promise<CouncilResult> {
     // Check depth limit before starting councillors
     if (this.depthTracker) {
@@ -156,7 +288,15 @@ export class CouncilManager {
       timeout,
       executionMode,
       maxRetries,
+      files,
     );
+
+    // Stash raw councillor results so the council-details hook can
+    // deterministically re-append verbatim per-councillor details if the
+    // council agent trims them from its final message. Stash on every
+    // run (including partial/total failure) so failed councillors are
+    // also surfaced verbatim.
+    this.stashResults(parentSessionId, councillorResults);
 
     const completedCount = councillorResults.filter(
       (r) => r.status === 'completed',
@@ -231,6 +371,7 @@ export class CouncilManager {
     variant?: string;
     timeout: number;
     includeReasoning?: boolean;
+    files?: string[];
   }): Promise<string> {
     const modelRef = parseModelReference(options.model);
     if (!modelRef) {
@@ -279,6 +420,17 @@ export class CouncilManager {
         body.variant = options.variant;
       }
 
+      // Attach user-uploaded files (passed through from council_session) as
+      // native file parts so each councillor can see their contents.
+      if (options.files && options.files.length > 0) {
+        for (const filePath of options.files) {
+          const filePart = buildFilePart(filePath);
+          if (filePart) {
+            body.parts.push(filePart);
+          }
+        }
+      }
+
       await promptWithTimeout(
         this.client,
         {
@@ -322,6 +474,7 @@ export class CouncilManager {
     timeout: number,
     executionMode: 'parallel' | 'serial' = 'parallel',
     maxRetries: number,
+    files?: string[],
   ): Promise<CouncilResult['councillorResults']> {
     const entries = Object.entries(councillors);
     const results: Array<{
@@ -343,6 +496,7 @@ export class CouncilManager {
             parentSessionId,
             timeout,
             maxRetries,
+            files,
           ),
         );
       }
@@ -365,6 +519,7 @@ export class CouncilManager {
             parentSessionId,
             timeout,
             maxRetries,
+            files,
           );
         })(),
       );
@@ -406,6 +561,7 @@ export class CouncilManager {
     parentSessionId: string,
     timeout: number,
     maxRetries: number,
+    files?: string[],
   ): Promise<{
     name: string;
     model: string;
@@ -433,6 +589,7 @@ export class CouncilManager {
           variant: config.variant,
           timeout,
           includeReasoning: false,
+          files,
         });
 
         return {

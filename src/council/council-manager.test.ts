@@ -1,4 +1,8 @@
 import { describe, expect, mock, test } from 'bun:test';
+import { writeFileSync } from 'node:fs';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { PluginConfig } from '../config';
 import { CouncilConfigSchema } from '../config/council-schema';
 import { SubagentDepthTracker } from '../utils/subagent-depth';
@@ -894,6 +898,322 @@ describe('CouncilManager', () => {
         'All councillors failed to produce output',
       );
       expect(result.result).toContain('test prompt');
+    });
+
+    test('attaches file parts to councillor sessions when files provided', async () => {
+      const tmpDir = await mkdtemp(join(tmpdir(), 'council-files-'));
+      const tempFilePath = join(tmpDir, 'notes.txt');
+      writeFileSync(tempFilePath, 'councillor context bytes');
+
+      const ctx = createMockContext({
+        sessionMessagesResult: {
+          data: [
+            {
+              info: { role: 'assistant' },
+              parts: [{ type: 'text', text: 'Response' }],
+            },
+          ],
+        },
+      });
+      const config: PluginConfig = {
+        council: {
+          presets: {
+            default: {
+              alpha: { model: 'openai/gpt-5.4-mini' },
+            },
+          },
+        },
+      } as any;
+      const manager = new CouncilManager(ctx, config, undefined);
+
+      await manager.runCouncil('test prompt', 'default', 'parent-session-id', [
+        tempFilePath,
+      ]);
+
+      const promptCalls = ctx.client.session.prompt.mock.calls as Array<
+        [
+          {
+            body?: {
+              parts?: Array<{
+                type: string;
+                text?: string;
+                mime?: string;
+                filename?: string;
+                url?: string;
+              }>;
+              agent?: string;
+            };
+          },
+        ]
+      >;
+      const councillorCalls = promptCalls.filter(
+        (c) => c[0].body?.agent === 'councillor',
+      );
+      expect(councillorCalls.length).toBeGreaterThan(0);
+
+      for (const call of councillorCalls) {
+        const parts = call[0].body?.parts ?? [];
+        // First part is always the text part
+        expect(parts[0]?.type).toBe('text');
+        expect(parts[0]?.text).toContain('test prompt');
+
+        // Must contain a file part
+        const filePart = parts.find((p) => p.type === 'file');
+        expect(filePart).toBeDefined();
+        expect(filePart?.mime).toBe('text/plain');
+        expect(filePart?.filename).toBe('notes.txt');
+        expect(filePart?.url).toMatch(/^data:text\/plain;base64,/);
+      }
+    });
+
+    test('omits file parts when files is undefined or empty', async () => {
+      const ctx = createMockContext({
+        sessionMessagesResult: {
+          data: [
+            {
+              info: { role: 'assistant' },
+              parts: [{ type: 'text', text: 'Response' }],
+            },
+          ],
+        },
+      });
+      const config: PluginConfig = {
+        council: {
+          presets: {
+            default: {
+              alpha: { model: 'openai/gpt-5.4-mini' },
+            },
+          },
+        },
+      } as any;
+      const manager = new CouncilManager(ctx, config, undefined);
+
+      await manager.runCouncil('test prompt', undefined, 'parent-id');
+
+      const promptCalls = ctx.client.session.prompt.mock.calls as Array<
+        [
+          {
+            body?: {
+              parts?: Array<{ type: string }>;
+              agent?: string;
+            };
+          },
+        ]
+      >;
+      const councillorCall = promptCalls.find(
+        (c) => c[0].body?.agent === 'councillor',
+      );
+      expect(councillorCall).toBeDefined();
+      const parts = councillorCall?.[0]?.body?.parts ?? [];
+      // Only the text part — no file parts when no files provided
+      expect(parts).toHaveLength(1);
+      expect(parts[0].type).toBe('text');
+      expect(parts.some((p) => p.type === 'file')).toBe(false);
+    });
+
+    test('skips unreadable file paths without throwing', async () => {
+      const ctx = createMockContext({
+        sessionMessagesResult: {
+          data: [
+            {
+              info: { role: 'assistant' },
+              parts: [{ type: 'text', text: 'Response' }],
+            },
+          ],
+        },
+      });
+      const config: PluginConfig = {
+        council: {
+          presets: {
+            default: {
+              alpha: { model: 'openai/gpt-5.4-mini' },
+            },
+          },
+        },
+      } as any;
+      const manager = new CouncilManager(ctx, config, undefined);
+
+      // Path that does not exist — buildFilePart should swallow the error
+      const result = await manager.runCouncil(
+        'test prompt',
+        'default',
+        'parent-id',
+        ['/does/not/exist/missing.txt'],
+      );
+
+      // Council still completes — the missing file is silently skipped
+      expect(result.success).toBe(true);
+
+      const promptCalls = ctx.client.session.prompt.mock.calls as Array<
+        [
+          {
+            body?: {
+              parts?: Array<{ type: string }>;
+              agent?: string;
+            };
+          },
+        ]
+      >;
+      const councillorCall = promptCalls.find(
+        (c) => c[0].body?.agent === 'councillor',
+      );
+      expect(councillorCall).toBeDefined();
+      const parts = councillorCall?.[0]?.body?.parts ?? [];
+      // Only the text part remains — no file part for the missing file
+      expect(parts.some((p) => p.type === 'file')).toBe(false);
+    });
+  });
+
+  describe('councillor results stash', () => {
+    test('runCouncil stashes results keyed by parent session id', async () => {
+      const ctx = createMockContext({
+        sessionMessagesResult: {
+          data: [
+            {
+              info: { role: 'assistant' },
+              parts: [{ type: 'text', text: 'Councillor response' }],
+            },
+          ],
+        },
+      });
+      const config = createTestCouncilConfig();
+      const manager = new CouncilManager(ctx, config, undefined);
+
+      await manager.runCouncil('test prompt', undefined, 'council-agent-1');
+
+      const stash = manager.getStash('council-agent-1');
+      expect(stash).toBeDefined();
+      expect(stash?.results).toHaveLength(2);
+      expect(stash?.timestamp).toBeGreaterThan(0);
+    });
+
+    test('getStash returns undefined for unknown session', () => {
+      const ctx = createMockContext();
+      const manager = new CouncilManager(ctx, undefined);
+      expect(manager.getStash('never-ran')).toBeUndefined();
+    });
+
+    test('clearStash removes a stashed entry', async () => {
+      const ctx = createMockContext({
+        sessionMessagesResult: {
+          data: [
+            {
+              info: { role: 'assistant' },
+              parts: [{ type: 'text', text: 'Councillor response' }],
+            },
+          ],
+        },
+      });
+      const config = createTestCouncilConfig();
+      const manager = new CouncilManager(ctx, config, undefined);
+
+      await manager.runCouncil('test prompt', undefined, 'council-agent-1');
+      expect(manager.getStash('council-agent-1')).toBeDefined();
+
+      manager.clearStash('council-agent-1');
+      expect(manager.getStash('council-agent-1')).toBeUndefined();
+    });
+
+    test('stash is populated even when all councillors fail', async () => {
+      const ctx = createMockContext({
+        sessionCreateResult: () => ({ data: {} }),
+      });
+      const config = createTestCouncilConfig();
+      const manager = new CouncilManager(ctx, config, undefined);
+
+      await manager.runCouncil('test prompt', undefined, 'council-agent-1');
+
+      const stash = manager.getStash('council-agent-1');
+      expect(stash).toBeDefined();
+      expect(stash?.results).toHaveLength(2);
+      expect(stash?.results.every((r) => r.status === 'failed')).toBe(true);
+    });
+
+    test('getStashByParent returns most recent child matching parent', async () => {
+      const ctx = createMockContext({
+        sessionMessagesResult: {
+          data: [
+            {
+              info: { role: 'assistant' },
+              parts: [{ type: 'text', text: 'Councillor response' }],
+            },
+          ],
+        },
+      });
+      const config = createTestCouncilConfig();
+      const manager = new CouncilManager(ctx, config, undefined);
+
+      await manager.runCouncil('prompt-a', undefined, 'council-agent-A');
+      // Small delay so timestamps differ
+      await new Promise((r) => setTimeout(r, 5));
+      await manager.runCouncil('prompt-b', undefined, 'council-agent-B');
+
+      const childToParent = new Map<string, string>([
+        ['council-agent-A', 'orchestrator-1'],
+        ['council-agent-B', 'orchestrator-1'],
+        ['unrelated-session', 'other-parent'],
+      ]);
+
+      const found = manager.getStashByParent('orchestrator-1', childToParent);
+      expect(found).toBeDefined();
+      expect(found?.councilAgentSessionId).toBe('council-agent-B');
+    });
+
+    test('getStashByParent returns undefined when no child matches', async () => {
+      const ctx = createMockContext({
+        sessionMessagesResult: {
+          data: [
+            {
+              info: { role: 'assistant' },
+              parts: [{ type: 'text', text: 'Councillor response' }],
+            },
+          ],
+        },
+      });
+      const config = createTestCouncilConfig();
+      const manager = new CouncilManager(ctx, config, undefined);
+
+      await manager.runCouncil('prompt', undefined, 'council-agent-A');
+
+      const childToParent = new Map<string, string>([
+        ['council-agent-A', 'some-other-orchestrator'],
+      ]);
+
+      expect(
+        manager.getStashByParent('orchestrator-1', childToParent),
+      ).toBeUndefined();
+    });
+
+    test('stash evicts oldest entry when cap is reached', async () => {
+      const ctx = createMockContext({
+        sessionMessagesResult: {
+          data: [
+            {
+              info: { role: 'assistant' },
+              parts: [{ type: 'text', text: 'Councillor response' }],
+            },
+          ],
+        },
+      });
+      const config = createTestCouncilConfig({
+        presets: {
+          default: {
+            alpha: { model: 'openai/gpt-5.4-mini' },
+          },
+        },
+      });
+      const manager = new CouncilManager(ctx, config, undefined);
+
+      // The cap is 50. Fill beyond it and confirm the oldest is evicted.
+      for (let i = 0; i < 55; i++) {
+        await manager.runCouncil('prompt', undefined, `session-${i}`);
+      }
+
+      // Oldest (session-0..4) should be evicted; session-5 onward retained.
+      expect(manager.getStash('session-0')).toBeUndefined();
+      expect(manager.getStash('session-4')).toBeUndefined();
+      expect(manager.getStash('session-5')).toBeDefined();
+      expect(manager.getStash('session-54')).toBeDefined();
     });
   });
 });

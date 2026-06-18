@@ -22,6 +22,7 @@ import {
   createApplyPatchHook,
   createAutoUpdateCheckerHook,
   createChatHeadersHook,
+  createCouncilDetailsHook,
   createDeepworkCommandHook,
   createDelegateTaskRetryHook,
   createFilterAvailableSkillsHook,
@@ -32,8 +33,8 @@ import {
   createTaskSessionManagerHook,
   ForegroundFallbackManager,
 } from './hooks';
-import { processImageAttachments } from './hooks/image-hook';
 import type { MessageWithParts } from './hooks/types';
+import { processFileAttachments } from './hooks/upload-hook';
 import { createInterviewManager } from './interview';
 import { createBuiltinMcps } from './mcp';
 import {
@@ -129,6 +130,12 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
   let multiplexerEnabled: boolean;
   let depthTracker: SubagentDepthTracker;
   let multiplexerSessionManager: MultiplexerSessionManager;
+  let councilManager: CouncilManager | undefined;
+  // Maps child session ID → parent session ID, populated on
+  // `session.created`. Used by the council-details hook to correlate a
+  // `task` tool call (parent = orchestrator) with the council agent
+  // session it spawned.
+  let childToParent: Map<string, string>;
   let autoUpdateChecker: ReturnType<typeof createAutoUpdateCheckerHook>;
   let phaseReminderHook: ReturnType<typeof createPhaseReminderHook>;
   let filterAvailableSkillsHook: ReturnType<
@@ -144,6 +151,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
   let deepworkCommandHook: ReturnType<typeof createDeepworkCommandHook>;
   let reflectCommandHook: ReturnType<typeof createReflectCommandHook>;
   let taskSessionManagerHook: ReturnType<typeof createTaskSessionManagerHook>;
+  let councilDetailsHook: ReturnType<typeof createCouncilDetailsHook>;
   let backgroundJobBoard: BackgroundJobBoard;
   let interviewManager: ReturnType<typeof createInterviewManager>;
   let presetManager: ReturnType<typeof createPresetManager>;
@@ -227,14 +235,24 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     }
 
     depthTracker = new SubagentDepthTracker();
+    childToParent = new Map<string, string>();
 
     // Initialize council tools (only when council is configured)
-    councilTools = config.council
-      ? createCouncilTool(
-          ctx,
-          new CouncilManager(ctx, config, depthTracker, multiplexerEnabled),
-        )
-      : {};
+    if (config.council) {
+      councilManager = new CouncilManager(
+        ctx,
+        config,
+        depthTracker,
+        multiplexerEnabled,
+      );
+      councilTools = createCouncilTool(ctx, councilManager);
+      councilDetailsHook = createCouncilDetailsHook(
+        councilManager,
+        childToParent,
+      );
+    } else {
+      councilTools = {};
+    }
 
     mcps = createBuiltinMcps(config.disabled_mcps, config.websearch);
     acpRunTools =
@@ -728,6 +746,10 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         if (depthTracker && childSessionId && parentSessionId) {
           depthTracker.registerChild(parentSessionId, childSessionId);
         }
+        // Track child → parent for council-details hook correlation.
+        if (childSessionId && parentSessionId) {
+          childToParent.set(childSessionId, parentSessionId);
+        }
       }
 
       // Handle multiplexer pane spawning for OpenCode's Task tool sessions
@@ -807,6 +829,10 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         }
         if (sessionID) {
           sessionAgentMap.delete(sessionID);
+          childToParent.delete(sessionID);
+          // Clear any stashed council results for this session to avoid
+          // stale entries lingering after the session is gone.
+          councilManager?.clearStash(sessionID);
         }
       }
     },
@@ -833,7 +859,14 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         output as { args?: unknown },
       );
 
-      // No-op for divoom
+      // Track council task calls so tool.execute.after can re-append
+      // verbatim councillor details if the council agent trimmed them.
+      if (councilDetailsHook) {
+        await councilDetailsHook['tool.execute.before'](
+          input as { tool: string; sessionID?: string; callID?: string },
+          output as { args?: unknown },
+        );
+      }
     },
 
     'command.execute.before': async (input, output) => {
@@ -974,15 +1007,16 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         }
       }
 
-      // Strip image parts from orchestrator messages when @observer is
-      // available. When the orchestrator's model doesn't support image
-      // input, the API call fails before the LLM can respond. We replace
-      // image bytes with a text nudge so the orchestrator delegates to
-      // @observer instead.
-      processImageAttachments({
+      // Persist ALL uploaded file types (images, PDFs, docs, etc.) to
+      // .opencode/uploads/ and inject their disk path as text. The path
+      // survives the text-only `task` delegation hop so subagents can
+      // read the file with their read tool. Image bytes are stripped
+      // (orchestrator models that don't support image input would fail
+      // the API call); non-image file parts are kept alongside the
+      // injected path so models that support them retain native access.
+      processFileAttachments({
         messages: typedOutput.messages,
         workDir: ctx.directory,
-        disabledAgents,
         log,
       });
 
@@ -1072,6 +1106,21 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           output as { output: unknown },
         ),
       );
+
+      // Deterministically ensure verbatim per-councillor details appear
+      // in council task output, even if the council agent trimmed them.
+      if (councilDetailsHook) {
+        await runPostToolHook('council-details', () =>
+          councilDetailsHook['tool.execute.after'](
+            input as {
+              tool: string;
+              sessionID?: string;
+              callID?: string;
+            },
+            output as { output?: unknown },
+          ),
+        );
+      }
     },
   };
 };
