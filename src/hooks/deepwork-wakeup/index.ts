@@ -39,7 +39,7 @@
 
 import type { PluginInput } from '@opencode-ai/plugin';
 import { execSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
 import { log } from '../../utils/logger';
 import type { BackgroundJobBoard } from '../../utils/background-job-board';
@@ -52,6 +52,56 @@ const DEFAULT_MAX_NO_PROGRESS = 15; // safety cap on consecutive "no" without pr
 const MESSAGE_READ_DELAY_MS = 500; // let OpenCode write the response before reading
 const DEFAULT_GATE_TIMEOUT_MS = 600_000; // 10 min for gate execution (LLM reviews can be slow)
 const DEFAULT_ADJUDICATOR_MODEL = 'openrouter/anthropic/claude-opus-4.8';
+
+const GATE_DIR_NAME = '.slim/deepwork/gates';
+
+/**
+ * Persist a gate to disk so it survives process restarts.
+ * Written to <directory>/.slim/deepwork/gates/<sessionID>.json
+ */
+function persistGate(directory: string | undefined, sessionID: string, gate: LoopGate | undefined): void {
+  if (!directory) return;
+  try {
+    const gateDir = join(directory, GATE_DIR_NAME);
+    mkdirSync(gateDir, { recursive: true });
+    const gateFile = join(gateDir, `${sessionID}.json`);
+    if (gate === undefined) {
+      if (existsSync(gateFile)) unlinkSync(gateFile);
+      return;
+    }
+    writeFileSync(gateFile, JSON.stringify(gate, null, 2));
+  } catch (err) {
+    log('[deepwork-wakeup] failed to persist gate', {
+      sessionID,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Load a persisted gate from disk. Called when a managed session is first
+ * seen after a process restart, to restore gate state.
+ */
+function loadPersistedGate(directory: string | undefined, sessionID: string): LoopGate | undefined {
+  if (!directory) return undefined;
+  try {
+    const gateFile = join(directory, GATE_DIR_NAME, `${sessionID}.json`);
+    if (!existsSync(gateFile)) return undefined;
+    const content = readFileSync(gateFile, 'utf-8');
+    const gate = JSON.parse(content) as LoopGate;
+    log('[deepwork-wakeup] loaded persisted gate from disk', {
+      sessionID,
+      gateType: gate.type,
+    });
+    return gate;
+  } catch (err) {
+    log('[deepwork-wakeup] failed to load persisted gate', {
+      sessionID,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  }
+}
 
 const EVENT_WAKEUP_MESSAGE =
   'Background work is ready to reconcile. Review the Background Job Board and continue: reconcile terminal results, validate, and proceed to the next phase or finish if all work is complete.';
@@ -186,6 +236,7 @@ export function createDeepworkWakeupHook(
   const hasHadBackgroundWork = new Set<string>();
   const timers = new Map<string, ReturnType<typeof setInterval>>();
   const adjudicatorSessions = new Set<string>();
+  const sessionsSeen = new Set<string>();
 
   function getState(sessionID: string): SessionWakeState {
     let s = states.get(sessionID);
@@ -433,6 +484,8 @@ export function createDeepworkWakeupHook(
         });
         clearTimer(sessionID);
         state.awaitingDoneCheck = false;
+        // Clear the persisted gate — the loop is done.
+        persistGate(directory, sessionID, undefined);
         return;
       }
 
@@ -803,6 +856,8 @@ export function createDeepworkWakeupHook(
         clearTimer(sessionId);
         states.delete(sessionId);
         hasHadBackgroundWork.delete(sessionId);
+        sessionsSeen.delete(sessionId);
+        persistGate(directory, sessionId, undefined); // remove persisted gate
         return;
       }
 
@@ -821,6 +876,19 @@ export function createDeepworkWakeupHook(
       if (shouldManageSession(sessionId)) {
         const state = getState(sessionId);
         state.idle = true;
+
+        // If this is the first time we've seen this session (after a
+        // process restart), try to reload any persisted gate from disk.
+        // The gate is in-memory and resets on restart — without this, the
+        // orchestrator falls back to checklist mode and loses its
+        // convergence loop.
+        if (!state.gate && !sessionsSeen.has(sessionId)) {
+          const persisted = loadPersistedGate(directory, sessionId);
+          if (persisted) {
+            state.gate = persisted;
+          }
+        }
+        sessionsSeen.add(sessionId);
 
         // If we were awaiting a done-check, handle the response now
         if (state.awaitingDoneCheck) {
@@ -908,6 +976,9 @@ export function createDeepworkWakeupHook(
         sessionID,
         gateType: gate?.type,
       });
+
+      // Persist to disk so the gate survives process restarts.
+      persistGate(directory, sessionID, gate);
 
       // Setting a gate is itself the signal that this is a convergence loop.
       // Start the periodic timer immediately if the session is idle, even
