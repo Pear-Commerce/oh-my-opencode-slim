@@ -1320,4 +1320,69 @@ describe('deepwork-wakeup hook', () => {
 
     hook._destroy();
   });
+
+  test('gate starts periodic timer even without background work history', async () => {
+    // Regression: setting a gate on a session that never launched background
+    // tasks must still start the periodic timer. The gate itself is the
+    // signal that this is a convergence loop.
+    const dir = makeGitRepo();
+    const board = new BackgroundJobBoard();
+    // No background tasks registered — board is empty
+
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+      directory: dir,
+    });
+
+    // No hasHadBackgroundWork — session has no background history
+
+    // Orchestrator goes idle first (no timer starts — no background work, no gate)
+    await hook.event(idleEvent('ses_orch'));
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    expect(timers.has('ses_orch')).toBe(false);
+
+    // Now set a gate — timer should start immediately (session is idle)
+    hook.setGate('ses_orch', { type: 'command', command: 'true' });
+    expect(timers.has('ses_orch')).toBe(true);
+
+    // Wait for the gate to fire
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Gate passed (exit 0) → timer cleared, no continue prompt
+    expect(timers.has('ses_orch')).toBe(false);
+    expect(promptAsync).not.toHaveBeenCalled();
+  });
+
+  test('gate set while session is busy starts timer after session goes idle', async () => {
+    const dir = makeGitRepo();
+    const board = new BackgroundJobBoard();
+
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+      directory: dir,
+    });
+
+    // Session is busy — set gate (timer should NOT start yet)
+    hook.setGate('ses_orch', { type: 'command', command: 'true' });
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    expect(timers.has('ses_orch')).toBe(false);
+
+    // Session goes idle — timer should start now (gate is set)
+    await hook.event(idleEvent('ses_orch'));
+    expect(timers.has('ses_orch')).toBe(true);
+
+    hook._destroy();
+  });
 });

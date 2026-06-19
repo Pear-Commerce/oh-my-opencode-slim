@@ -766,7 +766,8 @@ export function createDeepworkWakeupHook(
         }
 
         // Start periodic timer if this session has had background work
-        if (hasHadBackgroundWork.has(sessionId)) {
+        // OR has a gate set (convergence loop — the gate is the signal).
+        if (hasHadBackgroundWork.has(sessionId) || state.gate) {
           startTimer(sessionId);
         }
 
@@ -796,6 +797,10 @@ export function createDeepworkWakeupHook(
      * Set a convergence gate for a session. When set, the periodic timer
      * runs the gate instead of the model yes/no done-check.
      * Call with undefined to clear the gate and revert to checklist mode.
+     *
+     * Setting a gate also starts the periodic timer immediately if the
+     * session is currently idle — the gate itself is the signal that this
+     * is a convergence loop, so we don't require prior background work.
      */
     setGate(sessionID: string, gate: LoopGate | undefined): void {
       const state = getState(sessionID);
@@ -804,6 +809,13 @@ export function createDeepworkWakeupHook(
         sessionID,
         gateType: gate?.type,
       });
+
+      // Setting a gate is itself the signal that this is a convergence loop.
+      // Start the periodic timer immediately if the session is idle, even
+      // without prior background work.
+      if (gate && state.idle && !timers.has(sessionID)) {
+        startTimer(sessionID);
+      }
     },
 
     /** @internal Exposed for testing */
