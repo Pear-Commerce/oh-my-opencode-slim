@@ -316,12 +316,15 @@ export function createDeepworkWakeupHook(
         return;
       }
 
-      // Don't fire the done-check while background jobs are still running.
-      // The orchestrator is correctly idle waiting for them — the event-
-      // driven wake (Case 2) will handle completion. Interrupting with a
-      // done-check here would distract from the wait and could cause the
-      // orchestrator to declare done prematurely while work is in flight.
-      if (backgroundJobBoard.hasRunning(sessionID)) {
+      // Don't fire the done-check/gate while background jobs are still
+      // running OR while there's unreconciled terminal work. The
+      // orchestrator is correctly idle waiting for them — the event-driven
+      // wake (Case 2) handles completion. Firing the gate here would start
+      // a new review while a fixer result is still pending reconciliation.
+      if (
+        backgroundJobBoard.hasRunning(sessionID) ||
+        backgroundJobBoard.hasTerminalUnreconciled(sessionID)
+      ) {
         return;
       }
 
@@ -937,11 +940,17 @@ export function createDeepworkWakeupHook(
         // directly from the idle handler. Don't rely solely on the periodic
         // timer — if the timer is stuck or not firing, this ensures the gate
         // runs immediately when the orchestrator goes idle.
+        // BUT: don't fire if there's unreconciled terminal work — the
+        // orchestrator needs to process that first (the event-driven wake
+        // above already sent the reconcile prompt). Firing the gate here
+        // would start a new deck review while the fixer result is still
+        // pending reconciliation.
         if (
           state.gate &&
           !state.awaitingDoneCheck &&
           !state.wakeInFlight &&
-          !backgroundJobBoard.hasRunning(sessionId)
+          !backgroundJobBoard.hasRunning(sessionId) &&
+          !backgroundJobBoard.hasTerminalUnreconciled(sessionId)
         ) {
           log('[deepwork-wakeup] firing gate directly from idle handler', {
             sessionID: sessionId,
