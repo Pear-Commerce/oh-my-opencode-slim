@@ -52,7 +52,7 @@ import {
 
 const DEFAULT_DEDUP_WINDOW_MS = 3_000;
 const DEFAULT_WAKE_DELAY_MS = 800;
-const DEFAULT_INTERVAL_MS = 120_000; // 2 minutes
+const DEFAULT_INTERVAL_MS = 5_000; // 5 seconds — check frequently, no-op when busy
 const DEFAULT_MAX_NO_PROGRESS = 15; // safety cap on consecutive "no" without progress
 const MESSAGE_READ_DELAY_MS = 500; // let OpenCode write the response before reading
 const DEFAULT_GATE_TIMEOUT_MS = 600_000; // 10 min for gate execution (LLM reviews can be slow)
