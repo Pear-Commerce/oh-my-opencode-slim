@@ -51,7 +51,7 @@ const EVENT_WAKEUP_MESSAGE =
   'Background work is ready to reconcile. Review the Background Job Board and continue: reconcile terminal results, validate, and proceed to the next phase or finish if all work is complete.';
 
 const DONE_CHECK_MESSAGE =
-  'Look carefully at your deepwork progress file and current state. Are you done with all planned work? Respond with one word: yes or no.';
+  'Have you completed all work in the current deepwork scope, with any remaining work explicitly deferred and documented? Respond with one word: yes or no.';
 
 const CONTINUE_MESSAGE =
   'Continue your deepwork. Pick up where you left off and proceed with the next unfinished task.';
