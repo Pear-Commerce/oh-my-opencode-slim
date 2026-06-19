@@ -1,15 +1,25 @@
-import { describe, expect, test, mock, beforeEach } from 'bun:test';
+import { describe, expect, test, mock } from 'bun:test';
 import { BackgroundJobBoard } from '../../utils/background-job-board';
 import { createDeepworkWakeupHook } from './index';
 
-function makeClient() {
+function makeClient(lastAssistantText = 'no') {
   const promptAsync = mock(async () => {});
+  const messages = mock(async () => ({
+    data: [
+      {
+        info: { role: 'user' },
+        parts: [{ type: 'text', text: 'are you done?' }],
+      },
+      {
+        info: { role: 'assistant' },
+        parts: [{ type: 'text', text: lastAssistantText }],
+      },
+    ],
+  }));
   const client = {
-    session: {
-      promptAsync,
-    },
+    session: { promptAsync, messages },
   } as unknown as Parameters<typeof createDeepworkWakeupHook>[0];
-  return { client, promptAsync };
+  return { client, promptAsync, messages };
 }
 
 function idleEvent(sessionId: string) {
@@ -49,8 +59,15 @@ function deletedEvent(sessionId: string) {
 }
 
 const FAST_OPTS = { wakeDelayMs: 0, dedupWindowMs: 0 };
+const FAST_OPTS_WITH_READ = {
+  wakeDelayMs: 0,
+  dedupWindowMs: 0,
+  messageReadDelayMs: 0,
+};
 
 describe('deepwork-wakeup hook', () => {
+  // ── Event-driven wake tests ─────────────────────────────────────────
+
   test('wakes idle parent when a background session goes idle', async () => {
     const board = new BackgroundJobBoard();
     board.registerLaunch({
@@ -67,11 +84,9 @@ describe('deepwork-wakeup hook', () => {
       ...FAST_OPTS,
     });
 
-    // Parent orchestrator goes idle first
     await hook.event(idleEvent('ses_orch'));
     expect(promptAsync).not.toHaveBeenCalled();
 
-    // Background oracle completes → wake parent
     await hook.event(idleEvent('ses_ora1'));
     expect(promptAsync).toHaveBeenCalledTimes(1);
     const call = promptAsync.mock.calls[0]?.[0];
@@ -94,7 +109,6 @@ describe('deepwork-wakeup hook', () => {
       ...FAST_OPTS,
     });
 
-    // Parent is NOT idle (never received idle event) → background idle should not wake
     await hook.event(idleEvent('ses_ora1'));
     expect(promptAsync).not.toHaveBeenCalled();
   });
@@ -110,11 +124,11 @@ describe('deepwork-wakeup hook', () => {
     const { client, promptAsync } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
-      shouldManageSession: (id) => id === 'ses_orch', // only ses_orch is managed
+      shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
     });
 
-    await hook.event(idleEvent('ses_other')); // parent idle but not managed
+    await hook.event(idleEvent('ses_other'));
     await hook.event(idleEvent('ses_ora1'));
     expect(promptAsync).not.toHaveBeenCalled();
   });
@@ -149,7 +163,6 @@ describe('deepwork-wakeup hook', () => {
       agent: 'oracle',
     });
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
-    // terminalUnreconciled is now true
 
     const { client, promptAsync } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
@@ -162,7 +175,7 @@ describe('deepwork-wakeup hook', () => {
     expect(promptAsync).toHaveBeenCalledTimes(1);
   });
 
-  test('does not wake on orchestrator idle when no unreconciled work (termination)', async () => {
+  test('does not wake on orchestrator idle when no unreconciled work (no event wake)', async () => {
     const board = new BackgroundJobBoard();
     board.registerLaunch({
       taskID: 'ses_ora1',
@@ -170,7 +183,7 @@ describe('deepwork-wakeup hook', () => {
       agent: 'oracle',
     });
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
-    board.markReconciled('ses_ora1'); // fully reconciled
+    board.markReconciled('ses_ora1');
 
     const { client, promptAsync } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
@@ -180,17 +193,18 @@ describe('deepwork-wakeup hook', () => {
     });
 
     await hook.event(idleEvent('ses_orch'));
+    // No event-driven wake (board is clean), but timer starts (has background history)
+    // The timer hasn't fired yet, so no promptAsync
     expect(promptAsync).not.toHaveBeenCalled();
   });
 
-  test('does not wake when only running jobs exist (do not poll)', async () => {
+  test('does not event-wake when only running jobs exist', async () => {
     const board = new BackgroundJobBoard();
     board.registerLaunch({
       taskID: 'ses_ora1',
       parentSessionID: 'ses_orch',
       agent: 'oracle',
     });
-    // job is still running, not terminal
 
     const { client, promptAsync } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
@@ -200,7 +214,6 @@ describe('deepwork-wakeup hook', () => {
     });
 
     await hook.event(idleEvent('ses_orch'));
-    // Orchestrator idle with only running jobs → don't wake (wait for completion)
     expect(promptAsync).not.toHaveBeenCalled();
   });
 
@@ -218,93 +231,14 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       wakeDelayMs: 0,
-      dedupWindowMs: 10_000, // large dedup window
+      dedupWindowMs: 10_000,
     });
 
-    await hook.event(idleEvent('ses_orch')); // wakes
-    expect(promptAsync).toHaveBeenCalledTimes(1);
-
-    // Second wake attempt within dedup window → skipped
-    await hook.event(idleEvent('ses_orch'));
-    expect(promptAsync).toHaveBeenCalledTimes(1);
-  });
-
-  test('max wakes without progress stops the loop', async () => {
-    const board = new BackgroundJobBoard();
-    board.registerLaunch({
-      taskID: 'ses_ora1',
-      parentSessionID: 'ses_orch',
-      agent: 'oracle',
-    });
-    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
-    // Board signature won't change between wakes (no reconciliation happening)
-
-    const { client, promptAsync } = makeClient();
-    const hook = createDeepworkWakeupHook(client, {
-      backgroundJobBoard: board,
-      shouldManageSession: (id) => id === 'ses_orch',
-      wakeDelayMs: 0,
-      dedupWindowMs: 0,
-      maxWakesWithoutProgress: 3,
-    });
-
-    // First wake: signature is new, wakeCount resets to 0
     await hook.event(idleEvent('ses_orch'));
     expect(promptAsync).toHaveBeenCalledTimes(1);
 
-    // Busy → idle cycle (simulating orchestrator responding but not reconciling)
-    await hook.event(busyEvent('ses_orch'));
-    await hook.event(idleEvent('ses_orch')); // wake 2 (same sig, wakeCount=1)
-    expect(promptAsync).toHaveBeenCalledTimes(2);
-
-    await hook.event(busyEvent('ses_orch'));
-    await hook.event(idleEvent('ses_orch')); // wake 3 (wakeCount=2)
-    expect(promptAsync).toHaveBeenCalledTimes(3);
-
-    await hook.event(busyEvent('ses_orch'));
-    await hook.event(idleEvent('ses_orch')); // wake 4 (wakeCount=3, exceeds max)
-    expect(promptAsync).toHaveBeenCalledTimes(3); // stopped, no new wake
-
-    // Subsequent attempts also stopped
-    await hook.event(busyEvent('ses_orch'));
-    await hook.event(idleEvent('ses_orch'));
-    expect(promptAsync).toHaveBeenCalledTimes(3);
-  });
-
-  test('board progress resets wake count', async () => {
-    const board = new BackgroundJobBoard();
-    board.registerLaunch({
-      taskID: 'ses_ora1',
-      parentSessionID: 'ses_orch',
-      agent: 'oracle',
-    });
-    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
-
-    const { client, promptAsync } = makeClient();
-    const hook = createDeepworkWakeupHook(client, {
-      backgroundJobBoard: board,
-      shouldManageSession: (id) => id === 'ses_orch',
-      wakeDelayMs: 0,
-      dedupWindowMs: 0,
-      maxWakesWithoutProgress: 2,
-    });
-
-    // Wake 1
     await hook.event(idleEvent('ses_orch'));
     expect(promptAsync).toHaveBeenCalledTimes(1);
-
-    // Simulate reconciliation: board signature changes
-    board.markReconciled('ses_ora1');
-    board.registerLaunch({
-      taskID: 'ses_ora2',
-      parentSessionID: 'ses_orch',
-      agent: 'oracle',
-    });
-    board.updateStatus({ taskID: 'ses_ora2', state: 'completed' });
-
-    await hook.event(busyEvent('ses_orch'));
-    await hook.event(idleEvent('ses_orch')); // new signature → wakeCount resets
-    expect(promptAsync).toHaveBeenCalledTimes(2);
   });
 
   test('busy event clears idle state', async () => {
@@ -323,12 +257,11 @@ describe('deepwork-wakeup hook', () => {
       ...FAST_OPTS,
     });
 
-    await hook.event(idleEvent('ses_orch')); // idle + wake
+    await hook.event(idleEvent('ses_orch'));
     expect(promptAsync).toHaveBeenCalledTimes(1);
 
-    await hook.event(busyEvent('ses_orch')); // busy → not idle
+    await hook.event(busyEvent('ses_orch'));
 
-    // Background completes while parent is busy → should NOT wake (parent not idle)
     await hook.event(idleEvent('ses_ora1'));
     expect(promptAsync).toHaveBeenCalledTimes(1);
   });
@@ -352,11 +285,8 @@ describe('deepwork-wakeup hook', () => {
     await hook.event(idleEvent('ses_orch'));
     expect(promptAsync).toHaveBeenCalledTimes(1);
 
-    // Delete the orchestrator session
     await hook.event(deletedEvent('ses_orch'));
 
-    // State is cleaned up — re-creating idle won't wake because state is fresh
-    // (idle=false until a new idle event sets it)
     const states = (hook as unknown as { _states: Map<string, unknown> })
       ._states;
     expect(states.has('ses_orch')).toBe(false);
@@ -378,7 +308,6 @@ describe('deepwork-wakeup hook', () => {
       ...FAST_OPTS,
     });
 
-    // Use session.status with idle instead of session.idle
     await hook.event(statusIdleEvent('ses_orch'));
     expect(promptAsync).toHaveBeenCalledTimes(1);
   });
@@ -406,12 +335,11 @@ describe('deepwork-wakeup hook', () => {
     });
 
     await hook.event(idleEvent('ses_orch'));
-    // Unknown background session with no board entry
     await hook.event(idleEvent('ses_unknown'));
     expect(promptAsync).not.toHaveBeenCalled();
   });
 
-  // ── Periodic wakeup interval tests ──────────────────────────────────
+  // ── Periodic done-check interval tests ──────────────────────────────
 
   test('periodic timer starts when orchestrator with background history goes idle', async () => {
     const board = new BackgroundJobBoard();
@@ -421,27 +349,7 @@ describe('deepwork-wakeup hook', () => {
       agent: 'oracle',
     });
 
-    const { client, promptAsync } = makeClient();
-    const hook = createDeepworkWakeupHook(client, {
-      backgroundJobBoard: board,
-      shouldManageSession: (id) => id === 'ses_orch',
-      wakeDelayMs: 0,
-      dedupWindowMs: 0,
-      intervalMs: 50, // fast for testing
-    });
-
-    // Background completes → marks hasHadBackgroundWork + wakes parent
-    await hook.event(idleEvent('ses_orch'));
-    await hook.event(idleEvent('ses_ora1'));
-    expect(promptAsync).toHaveBeenCalledTimes(1);
-
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
-    expect(timers.has('ses_orch')).toBe(true);
-  });
-
-  test('periodic timer does NOT start for orchestrator without background history', async () => {
-    const board = new BackgroundJobBoard();
-    const { client, promptAsync } = makeClient();
+    const { client } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -450,13 +358,31 @@ describe('deepwork-wakeup hook', () => {
       intervalMs: 50,
     });
 
-    // Just goes idle, no background work ever
+    await hook.event(idleEvent('ses_orch'));
+    await hook.event(idleEvent('ses_ora1'));
+
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    expect(timers.has('ses_orch')).toBe(true);
+    hook._destroy();
+  });
+
+  test('periodic timer does NOT start for orchestrator without background history', async () => {
+    const board = new BackgroundJobBoard();
+    const { client } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 50,
+    });
+
     await hook.event(idleEvent('ses_orch'));
     const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
     expect(timers.has('ses_orch')).toBe(false);
   });
 
-  test('periodic timer wakes orchestrator after interval', async () => {
+  test('periodic timer sends done-check question, then continue prompt on "no"', async () => {
     const board = new BackgroundJobBoard();
     board.registerLaunch({
       taskID: 'ses_ora1',
@@ -466,30 +392,131 @@ describe('deepwork-wakeup hook', () => {
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
     board.markReconciled('ses_ora1');
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, messages } = makeClient('no');
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       wakeDelayMs: 0,
       dedupWindowMs: 0,
-      intervalMs: 30, // very fast
+      intervalMs: 30,
+      messageReadDelayMs: 0,
     });
 
-    // Mark hasHadBackgroundWork by having had a background job
     const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     // Orchestrator goes idle → timer starts
     await hook.event(idleEvent('ses_orch'));
 
-    // Wait for at least 2 intervals
-    await new Promise((r) => setTimeout(r, 80));
+    // Wait for timer to fire (sends done-check)
+    await new Promise((r) => setTimeout(r, 40));
 
-    // Should have been woken at least once by the periodic timer
-    expect(promptAsync.mock.calls.length).toBeGreaterThanOrEqual(1);
+    // First promptAsync should be the done-check question
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain('yes or no');
+
+    // Simulate: orchestrator becomes busy (processing the question)
+    await hook.event(busyEvent('ses_orch'));
+
+    // Orchestrator responds and goes idle → handleDoneCheckResponse fires
+    await hook.event(idleEvent('ses_orch'));
+
+    // Should have read the response and sent continue prompt
+    expect(messages).toHaveBeenCalledTimes(1);
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+    expect(promptAsync.mock.calls[1]?.[0].body.parts[0].text).toContain('Continue');
+
+    hook._destroy();
   });
 
-  test('periodic timer does not wake when orchestrator is busy', async () => {
+  test('periodic timer stops on "yes" answer', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, promptAsync } = makeClient('yes');
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    await hook.event(idleEvent('ses_orch'));
+
+    // Wait for done-check
+    await new Promise((r) => setTimeout(r, 40));
+
+    // Orchestrator processes and responds
+    await hook.event(busyEvent('ses_orch'));
+    await hook.event(idleEvent('ses_orch'));
+
+    // Timer should be cleared (orchestrator said yes)
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    expect(timers.has('ses_orch')).toBe(false);
+
+    // Only one promptAsync call (the done-check), no continue prompt
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+  });
+
+  test('"yes" is overridden when unreconciled work remains', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1'); // start clean so done-check fires, not event wake
+
+    const { client, promptAsync } = makeClient('yes');
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 40));
+
+    // Now add unreconciled work (simulates background job completing during done-check)
+    board.registerLaunch({
+      taskID: 'ses_ora2',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora2', state: 'completed' });
+    // ses_ora2 is now terminalUnreconciled
+
+    await hook.event(busyEvent('ses_orch'));
+    await hook.event(idleEvent('ses_orch'));
+
+    // Should NOT have stopped — should have sent continue prompt
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    expect(timers.has('ses_orch')).toBe(true);
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+    expect(promptAsync.mock.calls[1]?.[0].body.parts[0].text).toContain('Continue');
+
+    hook._destroy();
+  });
+
+  test('periodic timer does not fire when orchestrator is busy', async () => {
     const board = new BackgroundJobBoard();
     const { client, promptAsync } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
@@ -498,21 +525,17 @@ describe('deepwork-wakeup hook', () => {
       wakeDelayMs: 0,
       dedupWindowMs: 0,
       intervalMs: 30,
+      messageReadDelayMs: 0,
     });
 
     const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
-    // Orchestrator goes idle → timer starts
     await hook.event(idleEvent('ses_orch'));
-
-    // Orchestrator goes busy
     await hook.event(busyEvent('ses_orch'));
 
-    // Wait for intervals
     await new Promise((r) => setTimeout(r, 80));
 
-    // Should NOT have been woken (was busy during all intervals)
     expect(promptAsync).not.toHaveBeenCalled();
   });
 
@@ -538,70 +561,81 @@ describe('deepwork-wakeup hook', () => {
     expect(timers.has('ses_orch')).toBe(false);
   });
 
-  test('periodic timer stops after max no-op wakes', async () => {
+  test('safety cap stops timer after too many "no" answers without board progress', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync } = makeClient('no');
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       wakeDelayMs: 0,
       dedupWindowMs: 0,
-      maxWakesWithoutProgress: 3,
       intervalMs: 20,
+      messageReadDelayMs: 0,
+      maxNoProgress: 3,
     });
 
     const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
-    // Orchestrator goes idle → timer starts
+    // Start the timer
     await hook.event(idleEvent('ses_orch'));
 
-    // Wait for enough intervals to exceed maxWakes
-    // Each interval: wake → promptAsync → (no busy event, stays idle) → next interval
-    await new Promise((r) => setTimeout(r, 150));
+    // Manually set consecutiveNoProgress to just below the cap
+    const states = (hook as unknown as { _states: Map<string, { consecutiveNoProgress: number }> })._states;
+    states.get('ses_orch')!.consecutiveNoProgress = 2;
 
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
-    expect(timers.has('ses_orch')).toBe(false); // timer cleared after maxWakes
+    // Wait for timer to fire — it should send a done-check
+    await new Promise((r) => setTimeout(r, 25));
+    expect(promptAsync).toHaveBeenCalledTimes(1); // done-check sent
 
-    // Total wakes should be around maxWakes (not unbounded)
-    expect(promptAsync.mock.calls.length).toBeLessThanOrEqual(4);
-  });
-
-  test('foreground progress resets wakeCount (busy > 5s after wake)', async () => {
-    const board = new BackgroundJobBoard();
-    const { client, promptAsync } = makeClient();
-    const hook = createDeepworkWakeupHook(client, {
-      backgroundJobBoard: board,
-      shouldManageSession: (id) => id === 'ses_orch',
-      wakeDelayMs: 0,
-      dedupWindowMs: 0,
-      maxWakesWithoutProgress: 3,
-      intervalMs: 20,
-    });
-
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
-    hasHad.add('ses_orch');
-
-    // Orchestrator goes idle → timer starts → first wake
+    // Simulate: busy → idle → handleDoneCheckResponse → "no" → consecutiveNoProgress becomes 3
+    await hook.event(busyEvent('ses_orch'));
     await hook.event(idleEvent('ses_orch'));
+    expect(states.get('ses_orch')!.consecutiveNoProgress).toBe(3);
+
+    // Orchestrator processes continue prompt, does "work", goes idle again
+    await hook.event(busyEvent('ses_orch'));
+    await hook.event(idleEvent('ses_orch'));
+
+    // Wait for the next timer tick — should check 3 >= 3 and clear the timer
     await new Promise((r) => setTimeout(r, 25));
 
-    // Simulate: wake happened 10s ago, orchestrator went busy 9s ago,
-    // was busy for 9s (real foreground work), now going idle.
-    const states = (hook as unknown as { _states: Map<string, { lastBusyAt: number; lastWakeAt: number; wakeCount: number }> })._states;
-    const state = states.get('ses_orch')!;
-    const now = Date.now();
-    state.lastWakeAt = now - 10_000; // wake 10s ago
-    state.lastBusyAt = now - 9_000; // busy 9s ago (1s after wake)
-    state.wakeCount = 2; // pretend we've had 2 no-op wakes before this
-
-    // Orchestrator goes idle → should detect foreground progress → reset wakeCount
-    await hook.event(idleEvent('ses_orch'));
-    expect(state.wakeCount).toBe(0);
-
-    // Timer should still be running (not stopped)
     const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
-    expect(timers.has('ses_orch')).toBe(true);
+    expect(timers.has('ses_orch')).toBe(false);
+  });
+
+  test('ambiguous response defaults to "no" (keep working)', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, promptAsync } = makeClient('maybe, let me check');
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 40));
+
+    await hook.event(busyEvent('ses_orch'));
+    await hook.event(idleEvent('ses_orch'));
+
+    // Ambiguous → defaults to "no" → continue prompt sent
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+    expect(promptAsync.mock.calls[1]?.[0].body.parts[0].text).toContain('Continue');
 
     hook._destroy();
   });
@@ -611,7 +645,7 @@ describe('deepwork-wakeup hook', () => {
     const { client } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
-      shouldManageSession: () => true, // all sessions managed
+      shouldManageSession: () => true,
       wakeDelayMs: 0,
       dedupWindowMs: 0,
       intervalMs: 50,
@@ -631,41 +665,41 @@ describe('deepwork-wakeup hook', () => {
     expect(timers.size).toBe(0);
   });
 
-  test('periodic timer uses different wakeup message than event-driven', async () => {
+  test('done-check does not interfere with event-driven wake', async () => {
     const board = new BackgroundJobBoard();
     board.registerLaunch({
       taskID: 'ses_ora1',
       parentSessionID: 'ses_orch',
       agent: 'oracle',
     });
-    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync } = makeClient('no');
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       wakeDelayMs: 0,
       dedupWindowMs: 0,
       intervalMs: 30,
+      messageReadDelayMs: 0,
     });
 
-    // Event-driven wake (unreconciled work)
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    // Orchestrator idle → timer starts
     await hook.event(idleEvent('ses_orch'));
+
+    // Wait for done-check to fire
+    await new Promise((r) => setTimeout(r, 40));
+
+    // Orchestrator is now busy with done-check
+    await hook.event(busyEvent('ses_orch'));
+
+    // While busy, background completes — should NOT trigger event wake (parent not idle)
+    await hook.event(idleEvent('ses_ora1'));
+
+    // Only the done-check prompt, no event-driven wake
     expect(promptAsync).toHaveBeenCalledTimes(1);
-    const eventMsg = promptAsync.mock.calls[0]?.[0].body.parts[0].text;
-    expect(eventMsg).toContain('reconcile');
-
-    // Reconcile the job so board is empty
-    board.markReconciled('ses_ora1');
-
-    // Wait for periodic timer
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Periodic wake should use different message
-    const periodicCall = promptAsync.mock.calls[promptAsync.mock.calls.length - 1]?.[0];
-    if (periodicCall) {
-      expect(periodicCall.body.parts[0].text).toContain('Periodic wakeup');
-    }
 
     hook._destroy();
   });

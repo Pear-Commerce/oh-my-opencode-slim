@@ -15,24 +15,22 @@
  * 2. Orchestrator idle with unreconciled work — the board already knows about
  *    unreconciled terminal jobs. Wake it to retry reconciliation.
  *
- * **Periodic wakeup interval** (true /loop — handles premature idle with
+ * **Periodic done-check interval** (true /loop — handles premature idle with
  * empty board):
  * 3. When a managed orchestrator that has EVER had background work goes idle,
  *    start a periodic timer. Every `intervalMs`, if the orchestrator is still
- *    idle, wake it to check for remaining work. This catches the case where
- *    the orchestrator stops mid-work without any background jobs in flight
- *    (no event to trigger a wake).
+ *    idle, send a one-word done-check: "Look carefully — are you done with
+ *    all planned work? Respond with one word: yes or no."
+ *    - If the orchestrator responds "no" (not done) → reprompt to keep working.
+ *    - If the orchestrator responds "yes" (done) → stop the timer.
+ *    - If there is unreconciled background work when "yes" is received, override
+ *      to "no" (there is pending work to reconcile).
  *
  * Termination: the periodic timer stops when:
  * - The orchestrator session is deleted.
- * - Max consecutive no-op wakes exceeded (the orchestrator keeps going idle
- *   within seconds of being woken, without doing real work or changing the
- *   board — it's truly done or stuck).
- *
- * Progress detection: wakeCount resets when EITHER the board signature
- * changes (new background activity) OR the orchestrator was busy for > 5s
- * after a wake (did real foreground work). Only quick no-op responses
- * increment the counter.
+ * - The orchestrator confirms "yes, done" (with no unreconciled work).
+ * - Safety cap exceeded: too many consecutive "no" answers without any board
+ *   progress (the orchestrator is stuck saying "not done" but not advancing).
  *
  * Safety: the periodic timer only starts for sessions that have had
  * background work (deepwork is active). Regular chat sessions are not
@@ -45,21 +43,24 @@ import type { BackgroundJobBoard } from '../../utils/background-job-board';
 
 const DEFAULT_DEDUP_WINDOW_MS = 3_000;
 const DEFAULT_WAKE_DELAY_MS = 800;
-const DEFAULT_MAX_WAKES_WITHOUT_PROGRESS = 8;
 const DEFAULT_INTERVAL_MS = 120_000; // 2 minutes
-const NO_OP_THRESHOLD_MS = 5_000; // busy < 5s after wake = no-op
+const DEFAULT_MAX_NO_PROGRESS = 15; // safety cap on consecutive "no" without progress
+const MESSAGE_READ_DELAY_MS = 500; // let OpenCode write the response before reading
 
 const EVENT_WAKEUP_MESSAGE =
   'Background work is ready to reconcile. Review the Background Job Board and continue: reconcile terminal results, validate, and proceed to the next phase or finish if all work is complete.';
 
-const PERIODIC_WAKEUP_MESSAGE =
-  'Periodic wakeup: check if there is remaining deepwork to continue. If you have unfinished phases, deferred work, or uncommitted changes, proceed. If all work is complete and validated, say so and stop.';
+const DONE_CHECK_MESSAGE =
+  'Look carefully at your deepwork progress file and current state. Are you done with all planned work? Respond with one word: yes or no.';
+
+const CONTINUE_MESSAGE =
+  'Continue your deepwork. Pick up where you left off and proceed with the next unfinished task.';
 
 interface SessionWakeState {
   idle: boolean;
   lastWakeAt: number;
-  lastBusyAt: number;
-  wakeCount: number;
+  awaitingDoneCheck: boolean;
+  consecutiveNoProgress: number;
   lastBoardSignature: string;
   wakeInFlight: boolean;
 }
@@ -69,9 +70,12 @@ export interface DeepworkWakeupOptions {
   shouldManageSession: (sessionID: string) => boolean;
   wakeDelayMs?: number;
   dedupWindowMs?: number;
-  maxWakesWithoutProgress?: number;
   /** Periodic wakeup interval in ms (default 120000 = 2 min). */
   intervalMs?: number;
+  /** Safety cap: max consecutive "no" answers without board progress. */
+  maxNoProgress?: number;
+  /** Delay before reading done-check response in ms (default 500). */
+  messageReadDelayMs?: number;
 }
 
 export function createDeepworkWakeupHook(
@@ -81,9 +85,9 @@ export function createDeepworkWakeupHook(
   const { backgroundJobBoard, shouldManageSession } = options;
   const dedupWindowMs = options.dedupWindowMs ?? DEFAULT_DEDUP_WINDOW_MS;
   const wakeDelayMs = options.wakeDelayMs ?? DEFAULT_WAKE_DELAY_MS;
-  const maxWakes =
-    options.maxWakesWithoutProgress ?? DEFAULT_MAX_WAKES_WITHOUT_PROGRESS;
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const maxNoProgress = options.maxNoProgress ?? DEFAULT_MAX_NO_PROGRESS;
+  const messageReadDelayMs = options.messageReadDelayMs ?? MESSAGE_READ_DELAY_MS;
 
   const states = new Map<string, SessionWakeState>();
   const hasHadBackgroundWork = new Set<string>();
@@ -95,8 +99,8 @@ export function createDeepworkWakeupHook(
       s = {
         idle: false,
         lastWakeAt: 0,
-        lastBusyAt: 0,
-        wakeCount: 0,
+        awaitingDoneCheck: false,
+        consecutiveNoProgress: 0,
         lastBoardSignature: '',
         wakeInFlight: false,
       };
@@ -154,18 +158,20 @@ export function createDeepworkWakeupHook(
         return;
       }
       if (!state.idle) return; // orchestrator is busy, skip this tick
+      if (state.awaitingDoneCheck) return; // already sent a done-check, waiting for response
+      if (state.wakeInFlight) return; // a wake is in progress
 
-      // Check if we've exceeded max no-op wakes
-      if (state.wakeCount >= maxWakes) {
-        log('[deepwork-wakeup] max no-op wakes reached, stopping periodic timer', {
+      // Safety cap: too many "no" answers without board progress
+      if (state.consecutiveNoProgress >= maxNoProgress) {
+        log('[deepwork-wakeup] max no-progress done-checks reached, stopping', {
           sessionID,
-          wakeCount: state.wakeCount,
+          consecutiveNoProgress: state.consecutiveNoProgress,
         });
         clearTimer(sessionID);
         return;
       }
 
-      wake(sessionID, 'periodic-interval').catch(() => {});
+      sendDoneCheck(sessionID).catch(() => {});
     }, intervalMs);
 
     // Don't keep the process alive solely for this timer
@@ -179,40 +185,24 @@ export function createDeepworkWakeupHook(
   }
 
   /**
-   * Wake an idle managed orchestrator via promptAsync.
-   * Guards: dedup window, max-wakes-without-progress, in-flight.
+   * Send a promptAsync to an idle managed orchestrator.
+   * Returns true if sent, false if blocked by guards.
    */
-  async function wake(sessionID: string, reason: string): Promise<void> {
+  async function sendPrompt(
+    sessionID: string,
+    message: string,
+    reason: string,
+  ): Promise<boolean> {
     const state = getState(sessionID);
-    if (!state.idle) return;
-    if (state.wakeInFlight) return;
+    if (!state.idle) return false;
+    if (state.wakeInFlight) return false;
 
     const now = Date.now();
-    if (now - state.lastWakeAt < dedupWindowMs) return;
-
-    // Safety: stop waking if the board hasn't changed between wakes.
-    const sig = boardSignature(sessionID);
-    if (sig === state.lastBoardSignature) {
-      state.wakeCount += 1;
-      if (state.wakeCount >= maxWakes) {
-        log('[deepwork-wakeup] max wakes without progress, stopping', {
-          sessionID,
-          reason,
-          wakeCount: state.wakeCount,
-        });
-        clearTimer(sessionID);
-        return;
-      }
-    } else {
-      state.wakeCount = 0;
-      state.lastBoardSignature = sig;
-    }
+    if (now - state.lastWakeAt < dedupWindowMs) return false;
 
     state.wakeInFlight = true;
     state.lastWakeAt = now;
 
-    // Let OpenCode settle the idle state and write completion data before
-    // we trigger the API call that will read it.
     if (wakeDelayMs > 0) {
       await new Promise((r) => setTimeout(r, wakeDelayMs));
     }
@@ -229,12 +219,8 @@ export function createDeepworkWakeupHook(
 
       if (typeof sessionClient.promptAsync !== 'function') {
         log('[deepwork-wakeup] promptAsync unavailable', { sessionID });
-        return;
+        return false;
       }
-
-      const message = reason.startsWith('periodic')
-        ? PERIODIC_WAKEUP_MESSAGE
-        : EVENT_WAKEUP_MESSAGE;
 
       await sessionClient.promptAsync({
         path: { id: sessionID },
@@ -243,19 +229,144 @@ export function createDeepworkWakeupHook(
         },
       });
 
+      // The prompt will make the orchestrator busy. Set idle=false now to
+      // prevent the periodic timer from firing again before the busy event
+      // arrives.
+      state.idle = false;
+
       log('[deepwork-wakeup] woke orchestrator', {
         sessionID,
         reason,
-        wakeCount: state.wakeCount,
       });
+      return true;
     } catch (err) {
       log('[deepwork-wakeup] wake failed', {
         sessionID,
         error: err instanceof Error ? err.message : String(err),
       });
+      return false;
     } finally {
       state.wakeInFlight = false;
     }
+  }
+
+  /**
+   * Send the one-word done-check question.
+   */
+  async function sendDoneCheck(sessionID: string): Promise<void> {
+    const state = getState(sessionID);
+    const sent = await sendPrompt(sessionID, DONE_CHECK_MESSAGE, 'done-check');
+    if (sent) {
+      state.awaitingDoneCheck = true;
+    }
+  }
+
+  /**
+   * Read the last assistant message from a session and parse yes/no.
+   * Returns 'yes', 'no', or null (ambiguous/unreadable).
+   */
+  async function readDoneCheckResponse(
+    sessionID: string,
+  ): Promise<'yes' | 'no' | null> {
+    try {
+      // Small delay to ensure the response is fully written
+      if (messageReadDelayMs > 0) {
+        await new Promise((r) => setTimeout(r, messageReadDelayMs));
+      }
+
+      const result = await client.session.messages({
+        path: { id: sessionID },
+      });
+      const messages = (result.data ?? []) as Array<{
+        info: { role: string };
+        parts: Array<{ type: string; text?: string }>;
+      }>;
+
+      // Find the last assistant message
+      const lastAssistant = [...messages]
+        .reverse()
+        .find((m) => m.info.role === 'assistant');
+      if (!lastAssistant) return null;
+
+      // Extract text from parts
+      const text = lastAssistant.parts
+        .filter((p) => p.type === 'text' && typeof p.text === 'string')
+        .map((p) => p.text ?? '')
+        .join(' ')
+        .trim()
+        .toLowerCase();
+
+      if (!text) return null;
+
+      // Parse one-word response: check if it starts with yes or no
+      if (/^\s*yes\b/.test(text)) return 'yes';
+      if (/^\s*no\b/.test(text)) return 'no';
+
+      // Fallback: check if "yes" or "no" appears anywhere
+      if (/\byes\b/.test(text) && !/\bno\b/.test(text)) return 'yes';
+      if (/\bno\b/.test(text) && !/\byes\b/.test(text)) return 'no';
+
+      // Ambiguous — default to "no" (keep working) to avoid premature stop
+      log('[deepwork-wakeup] ambiguous done-check response, defaulting to no', {
+        sessionID,
+        responsePreview: text.slice(0, 100),
+      });
+      return 'no';
+    } catch (err) {
+      log('[deepwork-wakeup] failed to read done-check response', {
+        sessionID,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Handle the orchestrator's done-check response.
+   * Called when the orchestrator goes idle after a done-check was sent.
+   */
+  async function handleDoneCheckResponse(sessionID: string): Promise<void> {
+    const state = getState(sessionID);
+    state.awaitingDoneCheck = false;
+
+    const answer = await readDoneCheckResponse(sessionID);
+
+    if (answer === null) {
+      // Couldn't read response — retry on next interval
+      log('[deepwork-wakeup] done-check response unreadable, will retry', {
+        sessionID,
+      });
+      return;
+    }
+
+    // Override "yes" if there is unreconciled background work
+    if (answer === 'yes' && backgroundJobBoard.hasTerminalUnreconciled(sessionID)) {
+      log('[deepwork-wakeup] orchestrator said yes but unreconciled work remains, continuing', {
+        sessionID,
+      });
+      await sendPrompt(sessionID, CONTINUE_MESSAGE, 'done-check-yes-override');
+      return;
+    }
+
+    if (answer === 'yes') {
+      log('[deepwork-wakeup] orchestrator confirmed done, stopping periodic timer', {
+        sessionID,
+      });
+      clearTimer(sessionID);
+      return;
+    }
+
+    // answer === 'no' — reprompt to keep working
+    // Track board progress for safety cap
+    const sig = boardSignature(sessionID);
+    if (sig === state.lastBoardSignature) {
+      state.consecutiveNoProgress += 1;
+    } else {
+      state.consecutiveNoProgress = 0;
+      state.lastBoardSignature = sig;
+    }
+
+    await sendPrompt(sessionID, CONTINUE_MESSAGE, 'done-check-no-continue');
   }
 
   return {
@@ -282,12 +393,11 @@ export function createDeepworkWakeupHook(
         return;
       }
 
-      // Busy: record timestamp, clear idle state
+      // Busy: clear idle state
       if (isBusyEvent(event)) {
         if (shouldManageSession(sessionId)) {
           const state = getState(sessionId);
           state.idle = false;
-          state.lastBusyAt = Date.now();
         }
         return;
       }
@@ -297,25 +407,15 @@ export function createDeepworkWakeupHook(
       // Case 1: managed orchestrator went idle.
       if (shouldManageSession(sessionId)) {
         const state = getState(sessionId);
-        const now = Date.now();
         state.idle = true;
 
-        // Progress detection: if the orchestrator was busy for > 5s after
-        // a wake, it did real foreground work — reset wakeCount even if the
-        // board signature didn't change.
-        if (
-          state.lastWakeAt > 0 &&
-          state.lastBusyAt > state.lastWakeAt &&
-          now - state.lastBusyAt > NO_OP_THRESHOLD_MS
-        ) {
-          if (state.wakeCount > 0) {
-            log('[deepwork-wakeup] foreground progress detected, resetting wakeCount', {
-              sessionID: sessionId,
-              busyDurationMs: now - state.lastBusyAt,
-              previousWakeCount: state.wakeCount,
-            });
-            state.wakeCount = 0;
-          }
+        // If we were awaiting a done-check, handle the response now
+        if (state.awaitingDoneCheck) {
+          await handleDoneCheckResponse(sessionId);
+          // After handling, the timer is either cleared (yes) or still running (no).
+          // If "no", a continue prompt was sent — orchestrator will go busy.
+          // Don't start a new timer; the existing one is still running.
+          return;
         }
 
         // Mark as having had background work if the board has any jobs
@@ -323,14 +423,18 @@ export function createDeepworkWakeupHook(
           hasHadBackgroundWork.add(sessionId);
         }
 
-        // If the board already knows about unreconciled work, wake now.
+        // If the board already knows about unreconciled work, wake now
+        // (event-driven, not done-check)
         if (backgroundJobBoard.hasTerminalUnreconciled(sessionId)) {
           hasHadBackgroundWork.add(sessionId);
-          await wake(sessionId, 'orchestrator-idle-with-unreconciled');
+          await sendPrompt(
+            sessionId,
+            EVENT_WAKEUP_MESSAGE,
+            'orchestrator-idle-with-unreconciled',
+          );
         }
 
         // Start periodic timer if this session has had background work
-        // (deepwork is active). This catches premature idle with empty board.
         if (hasHadBackgroundWork.has(sessionId)) {
           startTimer(sessionId);
         }
@@ -343,21 +447,18 @@ export function createDeepworkWakeupHook(
       // the parent is a managed orchestrator that is currently idle.
       const job = backgroundJobBoard.get(sessionId);
       if (!job) return;
-      if (job.state === 'reconciled') return; // already fully processed
+      if (job.state === 'reconciled') return;
 
       const parentID = job.parentSessionID;
       if (!shouldManageSession(parentID)) return;
 
-      // Mark parent as having had background work
       hasHadBackgroundWork.add(parentID);
 
       const parentState = getState(parentID);
       if (!parentState.idle) return;
+      if (parentState.awaitingDoneCheck) return; // done-check in progress, don't interfere
 
-      // The background session going idle IS the signal that work is ready,
-      // even if the board hasn't processed the completion yet (it will on the
-      // API call we're about to trigger). So wake unconditionally here.
-      await wake(parentID, `background-idle:${sessionId}`);
+      await sendPrompt(parentID, EVENT_WAKEUP_MESSAGE, `background-idle:${sessionId}`);
     },
 
     /** @internal Exposed for testing */
