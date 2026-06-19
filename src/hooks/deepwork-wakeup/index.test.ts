@@ -703,4 +703,91 @@ describe('deepwork-wakeup hook', () => {
 
     hook._destroy();
   });
+
+  // ── Race condition tests ────────────────────────────────────────────
+
+  test('does not send prompt if orchestrator becomes busy during wake delay', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 50, // give us time to inject a busy event during the delay
+      dedupWindowMs: 0,
+    });
+
+    // Orchestrator goes idle with unreconciled work → triggers event wake
+    // We need to intercept: the wake starts, sleeps 50ms, but we send a
+    // busy event during that sleep.
+    const idlePromise = hook.event(idleEvent('ses_orch'));
+
+    // Immediately send busy event (during the 50ms wake delay)
+    await new Promise((r) => setTimeout(r, 10));
+    await hook.event(busyEvent('ses_orch'));
+
+    // Now wait for the idle promise to resolve (wake delay finishes)
+    await idlePromise;
+
+    // The prompt should NOT have been sent — orchestrator became busy
+    expect(promptAsync).not.toHaveBeenCalled();
+  });
+
+  test('does not send continue prompt if orchestrator became busy during done-check response read', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, promptAsync } = makeClient('no');
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 50, // give us time to inject busy during read
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    // Start: idle → timer fires → done-check sent
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 40));
+    expect(promptAsync).toHaveBeenCalledTimes(1); // done-check sent
+
+    // Orchestrator processes done-check, responds, goes idle
+    // This triggers handleDoneCheckResponse which reads response (50ms delay)
+    const responsePromise = (async () => {
+      await hook.event(busyEvent('ses_orch'));
+      await hook.event(idleEvent('ses_orch'));
+    })();
+
+    // During the 50ms read delay, inject a busy event (user started working)
+    await new Promise((r) => setTimeout(r, 20));
+    await hook.event(busyEvent('ses_orch'));
+
+    await responsePromise;
+    // Wait for handleDoneCheckResponse to finish
+    await new Promise((r) => setTimeout(r, 60));
+
+    // The continue prompt should NOT have been sent — orchestrator became
+    // busy during the read delay, and sendPrompt's post-delay idle check
+    // should have aborted.
+    // Total promptAsync calls: 1 (done-check only, no continue)
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    hook._destroy();
+  });
 });

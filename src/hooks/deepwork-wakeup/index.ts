@@ -207,6 +207,17 @@ export function createDeepworkWakeupHook(
       await new Promise((r) => setTimeout(r, wakeDelayMs));
     }
 
+    // Re-check idle AFTER the delay. The orchestrator may have become busy
+    // during the delay (user message, background completion, etc.). Sending
+    // a prompt to a busy session interrupts active work.
+    if (!state.idle) {
+      log('[deepwork-wakeup] orchestrator became busy during wake delay, aborting', {
+        sessionID,
+        reason,
+      });
+      return false;
+    }
+
     try {
       const sessionClient = client.session as unknown as {
         promptAsync?: (args: {
@@ -327,12 +338,14 @@ export function createDeepworkWakeupHook(
    */
   async function handleDoneCheckResponse(sessionID: string): Promise<void> {
     const state = getState(sessionID);
-    state.awaitingDoneCheck = false;
+    // Keep awaitingDoneCheck=true during response handling so the periodic
+    // timer doesn't fire another done-check while we're reading + deciding.
 
     const answer = await readDoneCheckResponse(sessionID);
 
     if (answer === null) {
       // Couldn't read response — retry on next interval
+      state.awaitingDoneCheck = false;
       log('[deepwork-wakeup] done-check response unreadable, will retry', {
         sessionID,
       });
@@ -345,6 +358,7 @@ export function createDeepworkWakeupHook(
         sessionID,
       });
       await sendPrompt(sessionID, CONTINUE_MESSAGE, 'done-check-yes-override');
+      state.awaitingDoneCheck = false;
       return;
     }
 
@@ -353,6 +367,7 @@ export function createDeepworkWakeupHook(
         sessionID,
       });
       clearTimer(sessionID);
+      state.awaitingDoneCheck = false;
       return;
     }
 
@@ -367,6 +382,7 @@ export function createDeepworkWakeupHook(
     }
 
     await sendPrompt(sessionID, CONTINUE_MESSAGE, 'done-check-no-continue');
+    state.awaitingDoneCheck = false;
   }
 
   return {
