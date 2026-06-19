@@ -24,6 +24,7 @@ import {
   createChatHeadersHook,
   createCouncilDetailsHook,
   createDeepworkCommandHook,
+  createDeepworkWakeupHook,
   createDelegateTaskRetryHook,
   createFilterAvailableSkillsHook,
   createJsonErrorRecoveryHook,
@@ -149,6 +150,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
   let jsonErrorRecoveryHook: ReturnType<typeof createJsonErrorRecoveryHook>;
   let foregroundFallback: ForegroundFallbackManager;
   let deepworkCommandHook: ReturnType<typeof createDeepworkCommandHook>;
+  let deepworkWakeupHook: ReturnType<typeof createDeepworkWakeupHook>;
   let reflectCommandHook: ReturnType<typeof createReflectCommandHook>;
   let taskSessionManagerHook: ReturnType<typeof createTaskSessionManagerHook>;
   let councilDetailsHook: ReturnType<typeof createCouncilDetailsHook>;
@@ -318,6 +320,11 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       maxSessionsPerAgent: config.backgroundJobs?.maxSessionsPerAgent ?? 2,
       readContextMinLines: config.backgroundJobs?.readContextMinLines ?? 10,
       readContextMaxFiles: config.backgroundJobs?.readContextMaxFiles ?? 8,
+      backgroundJobBoard,
+      shouldManageSession: (sessionID) =>
+        isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
+    });
+    deepworkWakeupHook = createDeepworkWakeupHook(ctx.client, {
       backgroundJobBoard,
       shouldManageSession: (sessionID) =>
         isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
@@ -779,6 +786,19 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           event: {
             type: string;
             properties?: { info?: { id?: string }; sessionID?: string };
+          };
+        },
+      );
+
+      await deepworkWakeupHook.event(
+        input as {
+          event: {
+            type: string;
+            properties?: {
+              info?: { id?: string };
+              sessionID?: string;
+              status?: { type?: string };
+            };
           };
         },
       );

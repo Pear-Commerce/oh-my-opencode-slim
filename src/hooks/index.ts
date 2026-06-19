@@ -4,6 +4,7 @@ export { createAutoUpdateCheckerHook } from './auto-update-checker';
 export { createChatHeadersHook } from './chat-headers';
 export { createCouncilDetailsHook } from './council-details';
 export { createDeepworkCommandHook } from './deepwork';
+export { createDeepworkWakeupHook } from './deepwork-wakeup';
 export { createDelegateTaskRetryHook } from './delegate-task-retry/hook';
 export { createFilterAvailableSkillsHook } from './filter-available-skills';
 export {
