@@ -27,6 +27,7 @@ import {
   createDeepworkWakeupHook,
   createDelegateTaskRetryHook,
   createFilterAvailableSkillsHook,
+  createFixerReviewHook,
   createJsonErrorRecoveryHook,
   createPhaseReminderHook,
   createPostFileToolNudgeHook,
@@ -151,6 +152,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
   let foregroundFallback: ForegroundFallbackManager;
   let deepworkCommandHook: ReturnType<typeof createDeepworkCommandHook>;
   let deepworkWakeupHook: ReturnType<typeof createDeepworkWakeupHook>;
+  let fixerReviewHook: ReturnType<typeof createFixerReviewHook>;
   let reflectCommandHook: ReturnType<typeof createReflectCommandHook>;
   let taskSessionManagerHook: ReturnType<typeof createTaskSessionManagerHook>;
   let councilDetailsHook: ReturnType<typeof createCouncilDetailsHook>;
@@ -328,6 +330,16 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       backgroundJobBoard,
       shouldManageSession: (sessionID) =>
         isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
+    });
+    // Resolve oracle model for fixer-review auto-review hook
+    const oracleAgentDef = agentDefs.find((a) => a.name === 'oracle');
+    const oracleModel =
+      (typeof oracleAgentDef?.config.model === 'string'
+        ? oracleAgentDef.config.model
+        : undefined) ?? oracleAgentDef?._modelArray?.[0]?.id;
+    fixerReviewHook = createFixerReviewHook(ctx.client, {
+      oracleModel,
+      directory: ctx.directory,
     });
     interviewManager = createInterviewManager(ctx, config);
     presetManager = createPresetManager(ctx, config);
@@ -887,6 +899,12 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           output as { args?: unknown },
         );
       }
+
+      // Capture fixer task calls for auto-oracle-review on non-trivial diffs
+      await fixerReviewHook['tool.execute.before'](
+        input as { tool: string; callID?: string; sessionID?: string },
+        output as { args?: unknown },
+      );
     },
 
     'command.execute.before': async (input, output) => {
@@ -1141,6 +1159,18 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           ),
         );
       }
+
+      // Auto-spawn oracle review on non-trivial fixer diffs
+      await runPostToolHook('fixer-review', () =>
+        fixerReviewHook['tool.execute.after'](
+          input as {
+            tool: string;
+            callID?: string;
+            sessionID?: string;
+          },
+          output as { output: unknown },
+        ),
+      );
     },
   };
 };
