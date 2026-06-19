@@ -492,8 +492,12 @@ export function createDeepworkWakeupHook(
         return;
       }
 
-      // Gate failed — send continue with the gate output
-      const message = `${GATE_FAIL_MESSAGE}\n\n## Gate output\n\`\`\`\n${output.slice(0, 2000)}\n\`\`\``;
+      // Gate failed — send continue with the gate output.
+      // Don't truncate: the adjudicator's full FAIL diagnosis is actionable
+      // and the orchestrator needs all of it to fix the issues. The log
+      // preview above is truncated for log readability, but the prompt to
+      // the orchestrator must be complete.
+      const message = `${GATE_FAIL_MESSAGE}\n\n## Gate output\n\`\`\`\n${output}\n\`\`\``;
       await sendPrompt(sessionID, message, 'gate-fail-continue');
 
       // Track progress for safety cap
