@@ -890,12 +890,24 @@ export function createDeepworkWakeupHook(
         }
         sessionsSeen.add(sessionId);
 
-        // If we were awaiting a done-check, handle the response now
-        if (state.awaitingDoneCheck) {
+        // If we were awaiting a done-check, handle the response now.
+        // BUT: if a gate is set, awaitingDoneCheck means the adjudicator is
+        // still running — the gate result comes from runGate (polling the
+        // adjudicator session), NOT from reading the orchestrator's yes/no
+        // response. Calling handleDoneCheckResponse here would misread the
+        // orchestrator's last message as a yes/no answer, send a checklist
+        // continue prompt, and create an infinite wake loop.
+        if (state.awaitingDoneCheck && !state.gate) {
           await handleDoneCheckResponse(sessionId);
           // After handling, the timer is either cleared (yes) or still running (no).
           // If "no", a continue prompt was sent — orchestrator will go busy.
           // Don't start a new timer; the existing one is still running.
+          return;
+        }
+
+        // If a gate is running (awaitingDoneCheck + gate), just return —
+        // the gate will complete on its own and send the result.
+        if (state.awaitingDoneCheck && state.gate) {
           return;
         }
 
