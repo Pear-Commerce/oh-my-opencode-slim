@@ -96,14 +96,23 @@ Only callable by orchestrator-class agents in managed sessions.`,
         if (!args.prompt) {
           throw new Error('type="adjudicator" requires a "prompt" argument');
         }
-        // Use the passed model, or fall back to the configured oracle model.
-        // The orchestrator may pass a bare model like "anthropic/claude-opus-4.8"
-        // without the provider prefix — prefer the config-resolved model which
-        // has the correct prefix (e.g. "openrouter/anthropic/claude-opus-4.8").
-        const model = args.model ?? options.defaultAdjudicatorModel;
+        // Resolve the model. The orchestrator may pass a bare model like
+        // "anthropic/claude-opus-4.8" without the provider prefix, which
+        // causes ProviderModelNotFoundError. If a default model is configured
+        // and the passed model is a suffix of it (e.g. "anthropic/claude-opus-4.8"
+        // matches "openrouter/anthropic/claude-opus-4.8"), use the default
+        // which has the correct provider prefix.
+        let model = args.model ?? options.defaultAdjudicatorModel;
+        if (
+          model &&
+          options.defaultAdjudicatorModel &&
+          options.defaultAdjudicatorModel.endsWith(`/${model}`)
+        ) {
+          model = options.defaultAdjudicatorModel;
+        }
         if (!model) {
           throw new Error(
-            'No adjudicator model configured. Pass a model argument (e.g. "openrouter/anthropic/claude-opus-4.8").',
+            'No adjudicator model configured. Pass a model argument with provider prefix (e.g. "openrouter/anthropic/claude-opus-4.8").',
           );
         }
         const gate: LoopGate = {
