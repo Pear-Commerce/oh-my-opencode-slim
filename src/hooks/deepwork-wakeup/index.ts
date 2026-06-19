@@ -171,6 +171,15 @@ export function createDeepworkWakeupHook(
         return;
       }
 
+      // Don't fire the done-check while background jobs are still running.
+      // The orchestrator is correctly idle waiting for them — the event-
+      // driven wake (Case 2) will handle completion. Interrupting with a
+      // done-check here would distract from the wait and could cause the
+      // orchestrator to declare done prematurely while work is in flight.
+      if (backgroundJobBoard.hasRunning(sessionID)) {
+        return;
+      }
+
       sendDoneCheck(sessionID).catch(() => {});
     }, intervalMs);
 

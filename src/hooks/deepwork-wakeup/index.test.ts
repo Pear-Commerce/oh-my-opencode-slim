@@ -672,6 +672,8 @@ describe('deepwork-wakeup hook', () => {
       parentSessionID: 'ses_orch',
       agent: 'oracle',
     });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1'); // no running jobs so done-check can fire
 
     const { client, promptAsync } = makeClient('no');
     const hook = createDeepworkWakeupHook(client, {
@@ -691,15 +693,96 @@ describe('deepwork-wakeup hook', () => {
 
     // Wait for done-check to fire
     await new Promise((r) => setTimeout(r, 40));
+    expect(promptAsync).toHaveBeenCalledTimes(1); // done-check sent
 
     // Orchestrator is now busy with done-check
     await hook.event(busyEvent('ses_orch'));
 
-    // While busy, background completes — should NOT trigger event wake (parent not idle)
-    await hook.event(idleEvent('ses_ora1'));
+    // While busy, a NEW background job completes — should NOT trigger event
+    // wake (parent not idle, and a done-check is in flight)
+    board.registerLaunch({
+      taskID: 'ses_ora2',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora2', state: 'completed' });
+    await hook.event(idleEvent('ses_ora2'));
 
-    // Only the done-check prompt, no event-driven wake
+    // Still only the done-check prompt, no event-driven wake (parent busy)
     expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    hook._destroy();
+  });
+
+  test('done-check does not fire while background jobs are running', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_fix1',
+      parentSessionID: 'ses_orch',
+      agent: 'fixer',
+    });
+    // job is still running (not terminal)
+
+    const { client, promptAsync } = makeClient('no');
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    // Orchestrator goes idle (correctly waiting for fixer) → timer starts
+    await hook.event(idleEvent('ses_orch'));
+
+    // Wait for multiple intervals — done-check should NOT fire (fixer running)
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(promptAsync).not.toHaveBeenCalled();
+
+    // Now fixer completes → event-driven wake fires (not done-check)
+    board.updateStatus({ taskID: 'ses_fix1', state: 'completed' });
+    await hook.event(idleEvent('ses_fix1'));
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    // The wake should be the event-driven reconcile message, not the done-check
+    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain('reconcile');
+
+    hook._destroy();
+  });
+
+  test('done-check fires after background jobs complete and reconcile', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_fix1',
+      parentSessionID: 'ses_orch',
+      agent: 'fixer',
+    });
+    board.updateStatus({ taskID: 'ses_fix1', state: 'completed' });
+    board.markReconciled('ses_fix1'); // no running jobs, no unreconciled
+
+    const { client, promptAsync } = makeClient('no');
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    await hook.event(idleEvent('ses_orch'));
+
+    // Wait for timer — done-check SHOULD fire (no running jobs)
+    await new Promise((r) => setTimeout(r, 40));
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain('yes or no');
 
     hook._destroy();
   });
