@@ -460,7 +460,7 @@ export function createDeepworkWakeupHook(
         passed = result.passed;
         output = result.output;
       } else {
-        const result = await runAdjudicatorGate(gate);
+        const result = await runAdjudicatorGate(sessionID, gate);
         passed = result.passed;
         output = result.output;
       }
@@ -609,12 +609,15 @@ export function createDeepworkWakeupHook(
    * may return before the LLM response is persisted, causing extractSessionResult
    * to read an empty message list.
    */
-  async function runAdjudicatorGate(gate: {
-    prompt: string;
-    model?: string;
-    timeoutMs?: number;
-    files?: string[];
-  }): Promise<{ passed: boolean; output: string }> {
+  async function runAdjudicatorGate(
+    parentSessionID: string,
+    gate: {
+      prompt: string;
+      model?: string;
+      timeoutMs?: number;
+      files?: string[];
+    },
+  ): Promise<{ passed: boolean; output: string }> {
     const model = gate.model ?? DEFAULT_ADJUDICATOR_MODEL;
     const timeoutMs = gate.timeoutMs ?? DEFAULT_GATE_TIMEOUT_MS;
     const modelRef = parseModelReference(model);
@@ -629,7 +632,8 @@ export function createDeepworkWakeupHook(
     try {
       const session = await client.session.create({
         body: {
-          parentID: undefined,
+          parentID: parentSessionID, // child of the orchestrator so it
+          // doesn't show as a top-level session in the UI
           title: 'deepwork gate adjudicator',
         },
         query: directory ? { directory } : undefined,
@@ -925,9 +929,10 @@ export function createDeepworkWakeupHook(
 
         // If the board already knows about unreconciled work, wake now
         // (event-driven, not done-check)
+        let sentEventWake = false;
         if (backgroundJobBoard.hasTerminalUnreconciled(sessionId)) {
           hasHadBackgroundWork.add(sessionId);
-          await sendPrompt(
+          sentEventWake = await sendPrompt(
             sessionId,
             EVENT_WAKEUP_MESSAGE,
             'orchestrator-idle-with-unreconciled',
@@ -944,15 +949,15 @@ export function createDeepworkWakeupHook(
         // directly from the idle handler. Don't rely solely on the periodic
         // timer — if the timer is stuck or not firing, this ensures the gate
         // runs immediately when the orchestrator goes idle.
-        // BUT: don't fire if there's unreconciled terminal work — the
-        // orchestrator needs to process that first (the event-driven wake
-        // above already sent the reconcile prompt). Firing the gate here
-        // would start a new deck review while the fixer result is still
-        // pending reconciliation.
+        // BUT: don't fire if there's unreconciled terminal work OR if we just
+        // sent an event wake to process a reconciled result — the orchestrator
+        // needs to process the result first. Firing the gate here would start
+        // a new deck review while the fixer result is still being processed.
         if (
           state.gate &&
           !state.awaitingDoneCheck &&
           !state.wakeInFlight &&
+          !sentEventWake &&
           !backgroundJobBoard.hasRunning(sessionId) &&
           !backgroundJobBoard.hasTerminalUnreconciled(sessionId)
         ) {
