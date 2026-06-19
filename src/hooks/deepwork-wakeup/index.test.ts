@@ -1381,7 +1381,7 @@ describe('deepwork-wakeup hook', () => {
     });
 
     // Session is busy — set gate (timer should NOT start yet)
-    hook.setGate('ses_orch', { type: 'command', command: 'true' });
+    hook.setGate('ses_orch', { type: 'command', command: 'false' });
     const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
     expect(timers.has('ses_orch')).toBe(false);
 

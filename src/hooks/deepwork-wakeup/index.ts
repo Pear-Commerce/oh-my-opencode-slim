@@ -274,6 +274,10 @@ export function createDeepworkWakeupHook(
         return;
       }
 
+      log('[deepwork-wakeup] periodic timer firing gate/done-check', {
+        sessionID,
+        hasGate: Boolean(state.gate),
+      });
       sendDoneCheck(sessionID).catch(() => {});
     }, intervalMs);
 
@@ -847,6 +851,23 @@ export function createDeepworkWakeupHook(
         // OR has a gate set (convergence loop — the gate is the signal).
         if (hasHadBackgroundWork.has(sessionId) || state.gate) {
           startTimer(sessionId);
+        }
+
+        // If a gate is set and no background jobs are running, fire the gate
+        // directly from the idle handler. Don't rely solely on the periodic
+        // timer — if the timer is stuck or not firing, this ensures the gate
+        // runs immediately when the orchestrator goes idle.
+        if (
+          state.gate &&
+          !state.awaitingDoneCheck &&
+          !state.wakeInFlight &&
+          !backgroundJobBoard.hasRunning(sessionId)
+        ) {
+          log('[deepwork-wakeup] firing gate directly from idle handler', {
+            sessionID: sessionId,
+            gateType: state.gate.type,
+          });
+          sendDoneCheck(sessionId).catch(() => {});
         }
 
         return;
