@@ -218,8 +218,11 @@ export function createDeepworkWakeupHook(
       sendDoneCheck(sessionID).catch(() => {});
     }, intervalMs);
 
-    // Don't keep the process alive solely for this timer
-    timer.unref?.();
+    // Do NOT unref this timer. The plugin runs in a Node.js utility process
+    // inside Electron. When the orchestrator goes idle and there's no other
+    // I/O, an unref'd timer won't fire because the event loop has nothing
+    // else to process. The timer must stay ref'd so it actually fires.
+    // Cleanup is handled by session.deleted events and _destroy().
 
     timers.set(sessionID, timer);
     log('[deepwork-wakeup] periodic timer started', {
