@@ -93,9 +93,22 @@ export class BackgroundJobBoard {
     const existing = this.jobs.get(input.taskID);
 
     if (existing) {
+      // A reused session can be relaunched by a different parent session
+      // (e.g. after an OpenCode session resume creates a new session ID but
+      // the orchestrator reuses a background session ID from the prior
+      // conversation). OpenCode injects the completion into whichever
+      // session launched the task most recently, so the job board must
+      // attribute the job to that same current parent. Otherwise the
+      // stale parent owns the job, formatForPrompt(newParent) sees nothing,
+      // the reconciliation reminder is never injected, and the deepwork
+      // loop stalls with terminal jobs that never reconcile.
+      const parentChanged =
+        input.parentSessionID !== existing.parentSessionID;
+      const agent = input.agent || existing.agent;
       const updated = {
         ...existing,
-        agent: input.agent || existing.agent,
+        parentSessionID: input.parentSessionID,
+        agent,
         description: input.description || existing.description,
         objective: input.objective ?? existing.objective,
         state: 'running',
@@ -111,6 +124,12 @@ export class BackgroundJobBoard {
         lastLiveBusyAt: now,
         lastUsedAt: now,
         updatedAt: now,
+        // Aliases are per-parent counters; regenerate when ownership moves
+        // so the new parent's prompt shows a consistent alias and the old
+        // parent's alias space is not polluted.
+        alias: parentChanged
+          ? this.nextAlias(input.parentSessionID, agent)
+          : existing.alias,
       } satisfies BackgroundJobRecord;
       this.jobs.set(input.taskID, updated);
       return updated;

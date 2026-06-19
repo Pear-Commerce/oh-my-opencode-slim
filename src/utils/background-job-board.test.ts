@@ -229,6 +229,61 @@ describe('BackgroundJobBoard', () => {
     });
   });
 
+  test('reassigns parentSessionID when an existing task id is relaunched by a different parent', () => {
+    // Regression: after an OpenCode session resume, the orchestrator reuses a
+    // background session ID from the prior conversation. The board must
+    // attribute the relaunched job to the new parent so formatForPrompt and
+    // completion injection stay aligned with the actual launching session.
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_1',
+      parentSessionID: 'parent-A',
+      agent: 'oracle',
+      description: 'first run under A',
+      now: 100,
+    });
+    board.updateStatus({
+      taskID: 'ses_1',
+      state: 'completed',
+      resultSummary: 'done',
+      now: 200,
+    });
+    board.markReconciled('ses_1', 250);
+
+    const relaunched = board.registerLaunch({
+      taskID: 'ses_1',
+      parentSessionID: 'parent-B',
+      agent: 'oracle',
+      description: 'reused run under B',
+      now: 300,
+    });
+
+    expect(relaunched).toMatchObject({
+      taskID: 'ses_1',
+      parentSessionID: 'parent-B',
+      agent: 'oracle',
+      state: 'running',
+      terminalUnreconciled: false,
+    });
+
+    // The job is now owned by parent-B: parent-A no longer sees it, parent-B
+    // does. This is what keeps the reconciliation reminder routed to the
+    // session that actually receives the completion.
+    expect(board.list('parent-A')).toEqual([]);
+    expect(board.list('parent-B').map((j) => j.taskID)).toEqual(['ses_1']);
+    expect(board.hasTerminalUnreconciled('parent-A')).toBe(false);
+    expect(board.hasRunning('parent-B')).toBe(true);
+
+    // Alias is regenerated under the new parent's counter space.
+    expect(relaunched.alias).toBe('ora-1');
+
+    // A completion under parent-B now surfaces in parent-B's prompt (not A's).
+    board.updateStatus({ taskID: 'ses_1', state: 'completed', now: 400 });
+    expect(board.formatForPrompt('parent-A')).toBeUndefined();
+    expect(board.formatForPrompt('parent-B')).toContain('ora-1');
+    expect(board.formatForPrompt('parent-B')).toContain('unreconciled');
+  });
+
   test('updates status from native task output', () => {
     const board = new BackgroundJobBoard();
     board.registerLaunch({
