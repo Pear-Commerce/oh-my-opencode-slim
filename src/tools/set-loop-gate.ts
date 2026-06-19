@@ -7,6 +7,8 @@ const z = tool.schema;
 export interface SetLoopGateToolOptions {
   setGate: (sessionID: string, gate: LoopGate | undefined) => void;
   shouldManageSession: (sessionID: string) => boolean;
+  /** Default adjudicator model (resolved from oracle agent config). */
+  defaultAdjudicatorModel?: string;
 }
 
 export function createSetLoopGateTool(
@@ -43,7 +45,7 @@ Only callable by orchestrator-class agents in managed sessions.`,
       model: z
         .string()
         .optional()
-        .describe('Model for adjudicator gate (e.g. "openai/gpt-4.1-mini"). Defaults to openai/gpt-4.1-mini.'),
+        .describe('Model for adjudicator gate. Must include provider prefix (e.g. "openrouter/anthropic/claude-opus-4.8"). Defaults to the configured oracle model.'),
       files: z
         .array(z.string())
         .optional()
@@ -94,24 +96,34 @@ Only callable by orchestrator-class agents in managed sessions.`,
         if (!args.prompt) {
           throw new Error('type="adjudicator" requires a "prompt" argument');
         }
+        // Use the passed model, or fall back to the configured oracle model.
+        // The orchestrator may pass a bare model like "anthropic/claude-opus-4.8"
+        // without the provider prefix — prefer the config-resolved model which
+        // has the correct prefix (e.g. "openrouter/anthropic/claude-opus-4.8").
+        const model = args.model ?? options.defaultAdjudicatorModel;
+        if (!model) {
+          throw new Error(
+            'No adjudicator model configured. Pass a model argument (e.g. "openrouter/anthropic/claude-opus-4.8").',
+          );
+        }
         const gate: LoopGate = {
           type: 'adjudicator',
           prompt: args.prompt,
-          ...(args.model ? { model: args.model } : {}),
+          model,
           ...(args.timeoutMs ? { timeoutMs: args.timeoutMs } : {}),
           ...(args.files ? { files: args.files } : {}),
         };
         options.setGate(sessionID, gate);
         log('[set_loop_gate] adjudicator gate set', {
           sessionID,
-          model: args.model ?? 'default',
+          model,
           fileCount: args.files?.length ?? 0,
           promptPreview: args.prompt.slice(0, 100),
         });
         const fileNote = args.files?.length
           ? ` with ${args.files.length} file attachment(s)`
           : '';
-        return `Loop gate set to LLM adjudicator (model: ${args.model ?? 'openai/gpt-4.1-mini'})${fileNote}.\nThe loop will continue until the adjudicator responds PASS.`;
+        return `Loop gate set to LLM adjudicator (model: ${model})${fileNote}.\nThe loop will continue until the adjudicator responds PASS.`;
       }
 
       throw new Error(`Unknown gate type: ${args.type}`);

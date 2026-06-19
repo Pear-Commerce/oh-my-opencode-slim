@@ -51,7 +51,7 @@ const DEFAULT_INTERVAL_MS = 5_000; // 5 seconds — check frequently, no-op when
 const DEFAULT_MAX_NO_PROGRESS = 15; // safety cap on consecutive "no" without progress
 const MESSAGE_READ_DELAY_MS = 500; // let OpenCode write the response before reading
 const DEFAULT_GATE_TIMEOUT_MS = 600_000; // 10 min for gate execution (LLM reviews can be slow)
-const DEFAULT_ADJUDICATOR_MODEL = 'openai/gpt-4.1-mini';
+const DEFAULT_ADJUDICATOR_MODEL = 'openrouter/anthropic/claude-opus-4.8';
 
 const EVENT_WAKEUP_MESSAGE =
   'Background work is ready to reconcile. Review the Background Job Board and continue: reconcile terminal results, validate, and proceed to the next phase or finish if all work is complete.';
@@ -185,6 +185,7 @@ export function createDeepworkWakeupHook(
   const states = new Map<string, SessionWakeState>();
   const hasHadBackgroundWork = new Set<string>();
   const timers = new Map<string, ReturnType<typeof setInterval>>();
+  const adjudicatorSessions = new Set<string>();
 
   function getState(sessionID: string): SessionWakeState {
     let s = states.get(sessionID);
@@ -575,8 +576,10 @@ export function createDeepworkWakeupHook(
         return { passed: false, output: 'Adjudicator session creation failed' };
       }
       sessionId = sid;
+      adjudicatorSessions.add(sid);
 
       const body: PromptBody = {
+        agent: 'oracle', // non-orchestrator agent so shouldManageSession returns false
         model: modelRef,
         tools: { task: false },
         parts: [
@@ -652,6 +655,7 @@ export function createDeepworkWakeupHook(
     } finally {
       if (sessionId) {
         client.session.abort({ path: { id: sessionId } }).catch(() => {});
+        adjudicatorSessions.delete(sessionId);
       }
     }
   }
@@ -783,6 +787,11 @@ export function createDeepworkWakeupHook(
       const event = input.event;
       const sessionId =
         event.properties?.info?.id ?? event.properties?.sessionID;
+
+      // Skip events from adjudicator sessions — they are tool-spawned, not
+      // managed orchestrators. Processing their idle/busy events would
+      // interfere with the parent's gate execution.
+      if (adjudicatorSessions.has(sessionId)) return;
       if (!sessionId) return;
 
       // Clean up on session deletion
