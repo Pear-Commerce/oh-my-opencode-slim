@@ -39,6 +39,8 @@
 
 import type { PluginInput } from '@opencode-ai/plugin';
 import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { basename, isAbsolute, join } from 'node:path';
 import { log } from '../../utils/logger';
 import type { BackgroundJobBoard } from '../../utils/background-job-board';
 import {
@@ -53,7 +55,7 @@ const DEFAULT_WAKE_DELAY_MS = 800;
 const DEFAULT_INTERVAL_MS = 120_000; // 2 minutes
 const DEFAULT_MAX_NO_PROGRESS = 15; // safety cap on consecutive "no" without progress
 const MESSAGE_READ_DELAY_MS = 500; // let OpenCode write the response before reading
-const DEFAULT_GATE_TIMEOUT_MS = 120_000; // 2 min for gate execution
+const DEFAULT_GATE_TIMEOUT_MS = 600_000; // 10 min for gate execution (LLM reviews can be slow)
 const DEFAULT_ADJUDICATOR_MODEL = 'openai/gpt-4.1-mini';
 
 const EVENT_WAKEUP_MESSAGE =
@@ -68,13 +70,70 @@ const CONTINUE_MESSAGE =
 const GATE_FAIL_MESSAGE =
   'The convergence gate failed. Review the gate output above, fix the issues, and continue.';
 
+const MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  txt: 'text/plain',
+  json: 'application/json',
+  csv: 'text/csv',
+  md: 'text/markdown',
+  html: 'text/html',
+  xml: 'application/xml',
+  zip: 'application/zip',
+};
+
+/**
+ * Resolve a file path. Relative paths are resolved against the project
+ * directory; absolute paths are used as-is.
+ */
+function resolveFilePath(filePath: string, directory: string | undefined): string {
+  if (isAbsolute(filePath) || !directory) return filePath;
+  return join(directory, filePath);
+}
+
+/**
+ * Read a file from disk and build a native file part (data URL) for the
+ * adjudicator session prompt body. Returns null if the file can't be read.
+ */
+function buildFilePart(filePath: string): {
+  type: 'file';
+  mime: string;
+  filename: string;
+  url: string;
+} | null {
+  try {
+    const bytes = readFileSync(filePath);
+    const ext = (filePath.split('.').pop() ?? '').toLowerCase();
+    const mime = MIME_BY_EXTENSION[ext] ?? 'application/octet-stream';
+    const b64 = Buffer.from(bytes).toString('base64');
+    return {
+      type: 'file',
+      mime,
+      filename: basename(filePath),
+      url: `data:${mime};base64,${b64}`,
+    };
+  } catch (error) {
+    log('[deepwork-wakeup] failed to read file for adjudicator attachment', {
+      filePath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 /**
  * Loop gate — replaces the model yes/no done-check with a machine-checkable
  * termination condition for convergence loops ("get this passable according
  * to x standard").
  *
  * - `command`: run a shell command. Exit 0 = pass (stop), non-zero = fail (continue).
- * - `adjudicator`: spawn a cheap LLM with a prompt that returns PASS or FAIL.
+ * - `adjudicator`: spawn a cheap LLM with a prompt (and optional file
+ *   attachments) that returns PASS or FAIL.
  *
  * When no gate is set, the hook uses the model yes/no done-check (checklist
  * mode). When a gate is set, it uses the gate (convergence mode).
@@ -86,6 +145,7 @@ export type LoopGate =
       prompt: string;
       model?: string;
       timeoutMs?: number;
+      files?: string[];
     };
 
 interface SessionWakeState {
@@ -428,13 +488,14 @@ export function createDeepworkWakeupHook(
   }
 
   /**
-   * Run an LLM adjudicator gate. The model receives the prompt and must
-   * respond with PASS or FAIL (optionally with a reason).
+   * Run an LLM adjudicator gate. The model receives the prompt (and any
+   * attached files) and must respond with PASS or FAIL.
    */
   async function runAdjudicatorGate(gate: {
     prompt: string;
     model?: string;
     timeoutMs?: number;
+    files?: string[];
   }): Promise<{ passed: boolean; output: string }> {
     const model = gate.model ?? DEFAULT_ADJUDICATOR_MODEL;
     const timeoutMs = gate.timeoutMs ?? DEFAULT_GATE_TIMEOUT_MS;
@@ -472,6 +533,18 @@ export function createDeepworkWakeupHook(
           },
         ],
       };
+
+      // Attach files as native file parts so the adjudicator can read them.
+      // Paths are resolved relative to the project directory.
+      if (gate.files && gate.files.length > 0) {
+        for (const filePath of gate.files) {
+          const resolved = resolveFilePath(filePath, directory);
+          const filePart = buildFilePart(resolved);
+          if (filePart) {
+            body.parts.push(filePart);
+          }
+        }
+      }
 
       await promptWithTimeout(
         client,

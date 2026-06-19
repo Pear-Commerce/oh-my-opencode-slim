@@ -1068,6 +1068,145 @@ describe('deepwork-wakeup hook', () => {
     expect(abort).toHaveBeenCalledTimes(1); // adjudicator session cleaned up
   });
 
+  test('adjudicator gate: attaches files as file parts', async () => {
+    const dir = makeGitRepo();
+    // Create a test file for the adjudicator to "review"
+    mkdirSync(join(dir, 'docs'), { recursive: true });
+    writeFileSync(join(dir, 'docs', 'deck.md'), '# Slide 1\nRVR declined 19.1pp\n');
+
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, prompt, create } = makeAdjudicatorClient('FAIL\nBlended RVR found.');
+
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+      directory: dir,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    hook.setGate('ses_orch', {
+      type: 'adjudicator',
+      prompt: 'Check the attached deck for blended RVR numbers.',
+      files: ['docs/deck.md'],
+    });
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Adjudicator was spawned
+    expect(create).toHaveBeenCalledTimes(1);
+    // The prompt call should have file parts in the body
+    expect(prompt).toHaveBeenCalledTimes(1);
+    const promptCall = prompt.mock.calls[0]?.[0];
+    const parts = promptCall.body.parts;
+    // First part is the text prompt
+    expect(parts[0].type).toBe('text');
+    expect(parts[0].text).toContain('PASS or FAIL');
+    // Second part should be the file attachment
+    expect(parts.length).toBe(2);
+    expect(parts[1].type).toBe('file');
+    expect(parts[1].filename).toBe('deck.md');
+    expect(parts[1].mime).toBe('text/markdown');
+    expect(parts[1].url).toContain('data:text/markdown;base64,');
+  });
+
+  test('adjudicator gate: resolves relative file paths against directory', async () => {
+    const dir = makeGitRepo();
+    mkdirSync(join(dir, 'output'), { recursive: true });
+    writeFileSync(join(dir, 'output', 'report.json'), '{"rvr": "19.1pp blended"}');
+
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, prompt } = makeAdjudicatorClient('FAIL');
+
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+      directory: dir,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    hook.setGate('ses_orch', {
+      type: 'adjudicator',
+      prompt: 'Check report.',
+      files: ['output/report.json'], // relative path
+    });
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 50));
+
+    const parts = prompt.mock.calls[0]?.[0].body.parts;
+    expect(parts[1].filename).toBe('report.json');
+  });
+
+  test('adjudicator gate: missing file is skipped gracefully', async () => {
+    const dir = makeGitRepo();
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, prompt } = makeAdjudicatorClient('PASS');
+
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+      directory: dir,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    hook.setGate('ses_orch', {
+      type: 'adjudicator',
+      prompt: 'Check.',
+      files: ['nonexistent.md', 'also-missing.json'],
+    });
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Missing files skipped — only the text prompt part remains
+    const parts = prompt.mock.calls[0]?.[0].body.parts;
+    expect(parts.length).toBe(1);
+    expect(parts[0].type).toBe('text');
+  });
+
   test('adjudicator gate: FAIL sends continue prompt', async () => {
     const board = new BackgroundJobBoard();
     board.registerLaunch({

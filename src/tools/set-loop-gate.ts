@@ -44,10 +44,14 @@ Only callable by orchestrator-class agents in managed sessions.`,
         .string()
         .optional()
         .describe('Model for adjudicator gate (e.g. "openai/gpt-4.1-mini"). Defaults to openai/gpt-4.1-mini.'),
+      files: z
+        .array(z.string())
+        .optional()
+        .describe('File paths to attach to the adjudicator prompt. Relative paths resolve against the project directory. The adjudicator reads these as native file attachments — use this instead of pasting large content into the prompt.'),
       timeoutMs: z
         .number()
         .optional()
-        .describe('Gate execution timeout in ms (default 120000 = 2 min)'),
+        .describe('Gate execution timeout in ms. Default 600000 (10 min). For adjudicator reviews of large documents, set higher (e.g. 1200000 = 20 min). The adjudicator session is aborted if it exceeds this.'),
     },
     async execute(args, toolContext) {
       const sessionID = toolContext?.sessionID;
@@ -95,14 +99,19 @@ Only callable by orchestrator-class agents in managed sessions.`,
           prompt: args.prompt,
           ...(args.model ? { model: args.model } : {}),
           ...(args.timeoutMs ? { timeoutMs: args.timeoutMs } : {}),
+          ...(args.files ? { files: args.files } : {}),
         };
         options.setGate(sessionID, gate);
         log('[set_loop_gate] adjudicator gate set', {
           sessionID,
           model: args.model ?? 'default',
+          fileCount: args.files?.length ?? 0,
           promptPreview: args.prompt.slice(0, 100),
         });
-        return `Loop gate set to LLM adjudicator (model: ${args.model ?? 'openai/gpt-4.1-mini'}).\nThe loop will continue until the adjudicator responds PASS.`;
+        const fileNote = args.files?.length
+          ? ` with ${args.files.length} file attachment(s)`
+          : '';
+        return `Loop gate set to LLM adjudicator (model: ${args.model ?? 'openai/gpt-4.1-mini'})${fileNote}.\nThe loop will continue until the adjudicator responds PASS.`;
       }
 
       throw new Error(`Unknown gate type: ${args.type}`);
