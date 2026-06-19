@@ -43,12 +43,7 @@ import { readFileSync } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
 import { log } from '../../utils/logger';
 import type { BackgroundJobBoard } from '../../utils/background-job-board';
-import {
-  type PromptBody,
-  extractSessionResult,
-  parseModelReference,
-  promptWithTimeout,
-} from '../../utils';
+import { type PromptBody, parseModelReference } from '../../utils';
 
 const DEFAULT_DEDUP_WINDOW_MS = 3_000;
 const DEFAULT_WAKE_DELAY_MS = 800;
@@ -171,6 +166,8 @@ export interface DeepworkWakeupOptions {
   messageReadDelayMs?: number;
   /** Project directory for command gate execution. */
   directory?: string;
+  /** Poll interval for adjudicator response in ms (default 3000). */
+  pollIntervalMs?: number;
 }
 
 export function createDeepworkWakeupHook(
@@ -183,6 +180,7 @@ export function createDeepworkWakeupHook(
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
   const maxNoProgress = options.maxNoProgress ?? DEFAULT_MAX_NO_PROGRESS;
   const messageReadDelayMs = options.messageReadDelayMs ?? MESSAGE_READ_DELAY_MS;
+  const pollIntervalMs = options.pollIntervalMs ?? 3_000;
 
   const states = new Map<string, SessionWakeState>();
   const hasHadBackgroundWork = new Set<string>();
@@ -488,8 +486,63 @@ export function createDeepworkWakeupHook(
   }
 
   /**
+   * Poll client.session.messages until an assistant response with text
+   * content appears, or timeout is reached. Returns the text or null.
+   */
+  async function pollForResponse(
+    sid: string,
+    timeoutMs: number,
+  ): Promise<string | null> {
+    const pollIntervalMsLocal = pollIntervalMs;
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, pollIntervalMsLocal));
+
+      try {
+        const result = await client.session.messages({
+          path: { id: sid },
+          ...(directory ? { query: { directory } } : {}),
+        });
+        const messages = (result.data ?? []) as Array<{
+          info: { role: string };
+          parts: Array<{ type: string; text?: string }>;
+        }>;
+
+        const lastAssistant = [...messages]
+          .reverse()
+          .find((m) => m.info.role === 'assistant');
+        if (!lastAssistant) continue;
+
+        const text = lastAssistant.parts
+          .filter((p) => p.type === 'text' && typeof p.text === 'string')
+          .map((p) => p.text ?? '')
+          .join(' ')
+          .trim();
+
+        if (text) return text;
+      } catch (err) {
+        log('[deepwork-wakeup] adjudicator poll error', {
+          sessionID: sid,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    log('[deepwork-wakeup] adjudicator poll timed out', {
+      sessionID: sid,
+      timeoutMs,
+    });
+    return null;
+  }
+
+  /**
    * Run an LLM adjudicator gate. The model receives the prompt (and any
    * attached files) and must respond with PASS or FAIL.
+   *
+   * Uses promptAsync + polling instead of prompt() because client.session.prompt
+   * may return before the LLM response is persisted, causing extractSessionResult
+   * to read an empty message list.
    */
   async function runAdjudicatorGate(gate: {
     prompt: string;
@@ -546,22 +599,38 @@ export function createDeepworkWakeupHook(
         }
       }
 
-      await promptWithTimeout(
-        client,
-        { path: { id: sid }, body, query: directory ? { directory } : undefined },
-        timeoutMs,
-      );
+      // Use promptAsync to queue the prompt (fire-and-forget), then poll
+      // client.session.messages until the assistant response appears.
+      const sessionClient = client.session as unknown as {
+        promptAsync?: (args: {
+          path: { id: string };
+          body: PromptBody;
+          query?: { directory: string };
+        }) => Promise<unknown>;
+      };
 
-      const extraction = await extractSessionResult(client, sid, {
-        directory,
-        includeReasoning: false,
-      });
-
-      if (extraction.empty) {
-        return { passed: false, output: 'Adjudicator returned empty response' };
+      if (typeof sessionClient.promptAsync !== 'function') {
+        return { passed: false, output: 'promptAsync unavailable' };
       }
 
-      const text = extraction.text.trim();
+      await sessionClient.promptAsync({
+        path: { id: sid },
+        body,
+        query: directory ? { directory } : undefined,
+      });
+
+      log('[deepwork-wakeup] adjudicator prompt queued, polling for response', {
+        sessionID: sid,
+        timeoutMs,
+      });
+
+      // Poll for the assistant response
+      const text = await pollForResponse(sid, timeoutMs);
+
+      if (!text) {
+        return { passed: false, output: 'Adjudicator returned empty response or timed out' };
+      }
+
       const lower = text.toLowerCase();
       const passed = /^\s*pass\b/.test(lower);
       const failed = /^\s*fail\b/.test(lower);

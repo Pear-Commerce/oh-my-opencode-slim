@@ -1036,7 +1036,7 @@ describe('deepwork-wakeup hook', () => {
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
     board.markReconciled('ses_ora1');
 
-    const { client, promptAsync, create, prompt, abort } = makeAdjudicatorClient('PASS\nAll clear.');
+    const { client, promptAsync, create, abort } = makeAdjudicatorClient('PASS\nAll clear.');
 
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
@@ -1045,6 +1045,7 @@ describe('deepwork-wakeup hook', () => {
       dedupWindowMs: 0,
       intervalMs: 30,
       messageReadDelayMs: 0,
+      pollIntervalMs: 0,
     });
 
     const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
@@ -1061,10 +1062,10 @@ describe('deepwork-wakeup hook', () => {
 
     // Adjudicator spawned and said PASS → timer cleared
     expect(create).toHaveBeenCalledTimes(1);
-    expect(prompt).toHaveBeenCalledTimes(1);
     const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
     expect(timers.has('ses_orch')).toBe(false);
-    expect(promptAsync).not.toHaveBeenCalled(); // no continue prompt on pass
+    // promptAsync called once for the adjudicator prompt (not for continue)
+    expect(promptAsync).toHaveBeenCalledTimes(1);
     expect(abort).toHaveBeenCalledTimes(1); // adjudicator session cleaned up
   });
 
@@ -1083,7 +1084,7 @@ describe('deepwork-wakeup hook', () => {
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
     board.markReconciled('ses_ora1');
 
-    const { client, prompt, create } = makeAdjudicatorClient('FAIL\nBlended RVR found.');
+    const { client, promptAsync, create } = makeAdjudicatorClient('FAIL\nBlended RVR found.');
 
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
@@ -1092,6 +1093,7 @@ describe('deepwork-wakeup hook', () => {
       dedupWindowMs: 0,
       intervalMs: 30,
       messageReadDelayMs: 0,
+      pollIntervalMs: 0,
       directory: dir,
     });
 
@@ -1109,9 +1111,9 @@ describe('deepwork-wakeup hook', () => {
 
     // Adjudicator was spawned
     expect(create).toHaveBeenCalledTimes(1);
-    // The prompt call should have file parts in the body
-    expect(prompt).toHaveBeenCalledTimes(1);
-    const promptCall = prompt.mock.calls[0]?.[0];
+    // promptAsync called twice: 1=adjudicator prompt (with files), 2=continue prompt
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+    const promptCall = promptAsync.mock.calls[0]?.[0];
     const parts = promptCall.body.parts;
     // First part is the text prompt
     expect(parts[0].type).toBe('text');
@@ -1138,7 +1140,7 @@ describe('deepwork-wakeup hook', () => {
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
     board.markReconciled('ses_ora1');
 
-    const { client, prompt } = makeAdjudicatorClient('FAIL');
+    const { client, promptAsync } = makeAdjudicatorClient('FAIL');
 
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
@@ -1147,6 +1149,7 @@ describe('deepwork-wakeup hook', () => {
       dedupWindowMs: 0,
       intervalMs: 30,
       messageReadDelayMs: 0,
+      pollIntervalMs: 0,
       directory: dir,
     });
 
@@ -1162,7 +1165,7 @@ describe('deepwork-wakeup hook', () => {
     await hook.event(idleEvent('ses_orch'));
     await new Promise((r) => setTimeout(r, 50));
 
-    const parts = prompt.mock.calls[0]?.[0].body.parts;
+    const parts = promptAsync.mock.calls[0]?.[0].body.parts;
     expect(parts[1].filename).toBe('report.json');
   });
 
@@ -1177,7 +1180,7 @@ describe('deepwork-wakeup hook', () => {
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
     board.markReconciled('ses_ora1');
 
-    const { client, prompt } = makeAdjudicatorClient('PASS');
+    const { client, promptAsync } = makeAdjudicatorClient('PASS');
 
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
@@ -1186,6 +1189,7 @@ describe('deepwork-wakeup hook', () => {
       dedupWindowMs: 0,
       intervalMs: 30,
       messageReadDelayMs: 0,
+      pollIntervalMs: 0,
       directory: dir,
     });
 
@@ -1202,7 +1206,7 @@ describe('deepwork-wakeup hook', () => {
     await new Promise((r) => setTimeout(r, 50));
 
     // Missing files skipped — only the text prompt part remains
-    const parts = prompt.mock.calls[0]?.[0].body.parts;
+    const parts = promptAsync.mock.calls[0]?.[0].body.parts;
     expect(parts.length).toBe(1);
     expect(parts[0].type).toBe('text');
   });
@@ -1228,6 +1232,7 @@ describe('deepwork-wakeup hook', () => {
       dedupWindowMs: 0,
       intervalMs: 30,
       messageReadDelayMs: 0,
+      pollIntervalMs: 0,
     });
 
     const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
@@ -1242,8 +1247,9 @@ describe('deepwork-wakeup hook', () => {
     await new Promise((r) => setTimeout(r, 50));
 
     // Adjudicator said FAIL → continue prompt with adjudicator output
-    expect(promptAsync).toHaveBeenCalledTimes(1);
-    const msg = promptAsync.mock.calls[0]?.[0].body.parts[0].text;
+    // promptAsync called twice: 1=adjudicator prompt, 2=continue prompt to orchestrator
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+    const msg = promptAsync.mock.calls[1]?.[0].body.parts[0].text;
     expect(msg).toContain('gate failed');
     expect(msg).toContain('FAIL');
     expect(msg).toContain('blended RVR');
