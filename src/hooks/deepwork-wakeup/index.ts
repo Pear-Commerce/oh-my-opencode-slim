@@ -38,14 +38,23 @@
  */
 
 import type { PluginInput } from '@opencode-ai/plugin';
+import { execSync } from 'node:child_process';
 import { log } from '../../utils/logger';
 import type { BackgroundJobBoard } from '../../utils/background-job-board';
+import {
+  type PromptBody,
+  extractSessionResult,
+  parseModelReference,
+  promptWithTimeout,
+} from '../../utils';
 
 const DEFAULT_DEDUP_WINDOW_MS = 3_000;
 const DEFAULT_WAKE_DELAY_MS = 800;
 const DEFAULT_INTERVAL_MS = 120_000; // 2 minutes
 const DEFAULT_MAX_NO_PROGRESS = 15; // safety cap on consecutive "no" without progress
 const MESSAGE_READ_DELAY_MS = 500; // let OpenCode write the response before reading
+const DEFAULT_GATE_TIMEOUT_MS = 120_000; // 2 min for gate execution
+const DEFAULT_ADJUDICATOR_MODEL = 'openai/gpt-4.1-mini';
 
 const EVENT_WAKEUP_MESSAGE =
   'Background work is ready to reconcile. Review the Background Job Board and continue: reconcile terminal results, validate, and proceed to the next phase or finish if all work is complete.';
@@ -56,6 +65,29 @@ const DONE_CHECK_MESSAGE =
 const CONTINUE_MESSAGE =
   'Continue your deepwork. Pick up where you left off and proceed with the next unfinished task.';
 
+const GATE_FAIL_MESSAGE =
+  'The convergence gate failed. Review the gate output above, fix the issues, and continue.';
+
+/**
+ * Loop gate — replaces the model yes/no done-check with a machine-checkable
+ * termination condition for convergence loops ("get this passable according
+ * to x standard").
+ *
+ * - `command`: run a shell command. Exit 0 = pass (stop), non-zero = fail (continue).
+ * - `adjudicator`: spawn a cheap LLM with a prompt that returns PASS or FAIL.
+ *
+ * When no gate is set, the hook uses the model yes/no done-check (checklist
+ * mode). When a gate is set, it uses the gate (convergence mode).
+ */
+export type LoopGate =
+  | { type: 'command'; command: string; timeoutMs?: number }
+  | {
+      type: 'adjudicator';
+      prompt: string;
+      model?: string;
+      timeoutMs?: number;
+    };
+
 interface SessionWakeState {
   idle: boolean;
   lastWakeAt: number;
@@ -63,6 +95,7 @@ interface SessionWakeState {
   consecutiveNoProgress: number;
   lastBoardSignature: string;
   wakeInFlight: boolean;
+  gate?: LoopGate;
 }
 
 export interface DeepworkWakeupOptions {
@@ -76,13 +109,15 @@ export interface DeepworkWakeupOptions {
   maxNoProgress?: number;
   /** Delay before reading done-check response in ms (default 500). */
   messageReadDelayMs?: number;
+  /** Project directory for command gate execution. */
+  directory?: string;
 }
 
 export function createDeepworkWakeupHook(
   client: PluginInput['client'],
   options: DeepworkWakeupOptions,
 ) {
-  const { backgroundJobBoard, shouldManageSession } = options;
+  const { backgroundJobBoard, shouldManageSession, directory } = options;
   const dedupWindowMs = options.dedupWindowMs ?? DEFAULT_DEDUP_WINDOW_MS;
   const wakeDelayMs = options.wakeDelayMs ?? DEFAULT_WAKE_DELAY_MS;
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
@@ -275,9 +310,204 @@ export function createDeepworkWakeupHook(
    */
   async function sendDoneCheck(sessionID: string): Promise<void> {
     const state = getState(sessionID);
+
+    // If a gate is configured, run it instead of the model yes/no check.
+    if (state.gate) {
+      await runGate(sessionID, state.gate);
+      return;
+    }
+
     const sent = await sendPrompt(sessionID, DONE_CHECK_MESSAGE, 'done-check');
     if (sent) {
       state.awaitingDoneCheck = true;
+    }
+  }
+
+  /**
+   * Run a convergence gate (command or LLM adjudicator).
+   * Pass → stop the loop. Fail → send continue prompt.
+   */
+  async function runGate(sessionID: string, gate: LoopGate): Promise<void> {
+    const state = getState(sessionID);
+    state.awaitingDoneCheck = true; // prevent timer from firing again
+
+    try {
+      let passed = false;
+      let output = '';
+
+      if (gate.type === 'command') {
+        const result = runCommandGate(gate);
+        passed = result.passed;
+        output = result.output;
+      } else {
+        const result = await runAdjudicatorGate(gate);
+        passed = result.passed;
+        output = result.output;
+      }
+
+      log('[deepwork-wakeup] gate executed', {
+        sessionID,
+        gateType: gate.type,
+        passed,
+        outputPreview: output.slice(0, 200),
+      });
+
+      // Override pass if there is unreconciled background work
+      if (passed && backgroundJobBoard.hasTerminalUnreconciled(sessionID)) {
+        log('[deepwork-wakeup] gate passed but unreconciled work remains, continuing', {
+          sessionID,
+        });
+        passed = false;
+        output = 'Gate passed, but unreconciled background work remains.';
+      }
+
+      if (passed) {
+        log('[deepwork-wakeup] gate passed, stopping periodic timer', {
+          sessionID,
+        });
+        clearTimer(sessionID);
+        state.awaitingDoneCheck = false;
+        return;
+      }
+
+      // Gate failed — send continue with the gate output
+      const message = `${GATE_FAIL_MESSAGE}\n\n## Gate output\n\`\`\`\n${output.slice(0, 2000)}\n\`\`\``;
+      await sendPrompt(sessionID, message, 'gate-fail-continue');
+
+      // Track progress for safety cap
+      const sig = boardSignature(sessionID);
+      if (sig === state.lastBoardSignature) {
+        state.consecutiveNoProgress += 1;
+      } else {
+        state.consecutiveNoProgress = 0;
+        state.lastBoardSignature = sig;
+      }
+    } catch (err) {
+      log('[deepwork-wakeup] gate execution failed', {
+        sessionID,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // On gate error, send continue (safer to keep working than to stop)
+      await sendPrompt(
+        sessionID,
+        `${GATE_FAIL_MESSAGE}\n\n## Gate error\nThe gate could not be executed: ${err instanceof Error ? err.message : String(err)}`,
+        'gate-error-continue',
+      );
+    } finally {
+      state.awaitingDoneCheck = false;
+    }
+  }
+
+  /**
+   * Run a command gate. Exit 0 = pass, non-zero = fail.
+   */
+  function runCommandGate(gate: {
+    command: string;
+    timeoutMs?: number;
+  }): { passed: boolean; output: string } {
+    const timeoutMs = gate.timeoutMs ?? DEFAULT_GATE_TIMEOUT_MS;
+    try {
+      const output = execSync(gate.command, {
+        cwd: directory ?? process.cwd(),
+        encoding: 'utf-8',
+        timeout: timeoutMs,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return { passed: true, output: output.trim() || '(no output)' };
+    } catch (err) {
+      const e = err as { stdout?: string; stderr?: string; message?: string };
+      const output = [e.stdout ?? '', e.stderr ?? '', e.message ?? '']
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+      return { passed: false, output: output || '(no output)' };
+    }
+  }
+
+  /**
+   * Run an LLM adjudicator gate. The model receives the prompt and must
+   * respond with PASS or FAIL (optionally with a reason).
+   */
+  async function runAdjudicatorGate(gate: {
+    prompt: string;
+    model?: string;
+    timeoutMs?: number;
+  }): Promise<{ passed: boolean; output: string }> {
+    const model = gate.model ?? DEFAULT_ADJUDICATOR_MODEL;
+    const timeoutMs = gate.timeoutMs ?? DEFAULT_GATE_TIMEOUT_MS;
+    const modelRef = parseModelReference(model);
+    if (!modelRef) {
+      return {
+        passed: false,
+        output: `Invalid adjudicator model format: ${model}`,
+      };
+    }
+
+    let sessionId: string | undefined;
+    try {
+      const session = await client.session.create({
+        body: {
+          parentID: undefined,
+          title: 'deepwork gate adjudicator',
+        },
+        query: directory ? { directory } : undefined,
+      });
+
+      const sid = (session as { data?: { id?: string } }).data?.id;
+      if (!sid) {
+        return { passed: false, output: 'Adjudicator session creation failed' };
+      }
+      sessionId = sid;
+
+      const body: PromptBody = {
+        model: modelRef,
+        tools: { task: false },
+        parts: [
+          {
+            type: 'text',
+            text: `${gate.prompt}\n\nRespond on the first line with either PASS or FAIL. If FAIL, briefly explain why on subsequent lines.`,
+          },
+        ],
+      };
+
+      await promptWithTimeout(
+        client,
+        { path: { id: sid }, body, query: directory ? { directory } : undefined },
+        timeoutMs,
+      );
+
+      const extraction = await extractSessionResult(client, sid, {
+        directory,
+        includeReasoning: false,
+      });
+
+      if (extraction.empty) {
+        return { passed: false, output: 'Adjudicator returned empty response' };
+      }
+
+      const text = extraction.text.trim();
+      const lower = text.toLowerCase();
+      const passed = /^\s*pass\b/.test(lower);
+      const failed = /^\s*fail\b/.test(lower);
+
+      if (!passed && !failed) {
+        // Ambiguous — default to fail (keep working)
+        log('[deepwork-wakeup] adjudicator response ambiguous, defaulting to fail', {
+          responsePreview: text.slice(0, 100),
+        });
+        return { passed: false, output: text };
+      }
+
+      return { passed, output: text };
+    } catch (err) {
+      return {
+        passed: false,
+        output: `Adjudicator failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    } finally {
+      if (sessionId) {
+        client.session.abort({ path: { id: sessionId } }).catch(() => {});
+      }
     }
   }
 
@@ -484,6 +714,20 @@ export function createDeepworkWakeupHook(
       if (parentState.awaitingDoneCheck) return; // done-check in progress, don't interfere
 
       await sendPrompt(parentID, EVENT_WAKEUP_MESSAGE, `background-idle:${sessionId}`);
+    },
+
+    /**
+     * Set a convergence gate for a session. When set, the periodic timer
+     * runs the gate instead of the model yes/no done-check.
+     * Call with undefined to clear the gate and revert to checklist mode.
+     */
+    setGate(sessionID: string, gate: LoopGate | undefined): void {
+      const state = getState(sessionID);
+      state.gate = gate;
+      log('[deepwork-wakeup] gate set', {
+        sessionID,
+        gateType: gate?.type,
+      });
     },
 
     /** @internal Exposed for testing */

@@ -51,6 +51,7 @@ import {
   createCancelTaskTool,
   createCouncilTool,
   createPresetManager,
+  createSetLoopGateTool,
   createWebfetchTool,
 } from './tools';
 import { recordTuiAgentModel, recordTuiAgentModels } from './tui-state';
@@ -162,6 +163,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
   let companionManager: CompanionManager;
   let councilTools: Record<string, unknown>;
   let cancelTaskTools: Record<string, unknown>;
+  let setLoopGateTools: Record<string, unknown>;
   let acpRunTools: Record<string, ReturnType<typeof createAcpRunTool>>;
   let webfetch: ReturnType<typeof createWebfetchTool>;
   let rewriteDisplayNameMentions: ReturnType<
@@ -330,6 +332,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       backgroundJobBoard,
       shouldManageSession: (sessionID) =>
         isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
+      directory: ctx.directory,
     });
     // Resolve oracle model for fixer-review auto-review hook
     const oracleAgentDef = agentDefs.find((a) => a.name === 'oracle');
@@ -354,10 +357,16 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       shouldManageSession: (sessionID) =>
         isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
     });
+    setLoopGateTools = createSetLoopGateTool({
+      setGate: (sessionID, gate) => deepworkWakeupHook.setGate(sessionID, gate),
+      shouldManageSession: (sessionID) =>
+        isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
+    });
 
     toolCount =
       Object.keys(councilTools).length +
       Object.keys(cancelTaskTools).length +
+      Object.keys(setLoopGateTools).length +
       Object.keys(acpRunTools).length +
       1 + // webfetch
       2; // ast_grep_search, ast_grep_replace
@@ -444,6 +453,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     tool: {
       ...councilTools,
       ...cancelTaskTools,
+      ...setLoopGateTools,
       ...acpRunTools,
       webfetch,
       ast_grep_search,

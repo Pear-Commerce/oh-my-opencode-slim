@@ -5,4 +5,5 @@ export { createCancelTaskTool } from './cancel-task';
 export { createCouncilTool } from './council';
 export type { PresetManager } from './preset-manager';
 export { createPresetManager } from './preset-manager';
+export { createSetLoopGateTool } from './set-loop-gate';
 export { createWebfetchTool } from './smartfetch';

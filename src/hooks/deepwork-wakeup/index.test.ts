@@ -1,6 +1,10 @@
 import { describe, expect, test, mock } from 'bun:test';
+import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { execSync } from 'node:child_process';
 import { BackgroundJobBoard } from '../../utils/background-job-board';
-import { createDeepworkWakeupHook } from './index';
+import { createDeepworkWakeupHook, type LoopGate } from './index';
 
 function makeClient(lastAssistantText = 'no') {
   const promptAsync = mock(async () => {});
@@ -16,10 +20,38 @@ function makeClient(lastAssistantText = 'no') {
       },
     ],
   }));
+  const create = mock(async () => ({ data: { id: 'ses_adjudicator' } }));
+  const prompt = mock(async () => {});
+  const abort = mock(async () => {});
   const client = {
-    session: { promptAsync, messages },
+    session: { promptAsync, messages, create, prompt, abort },
   } as unknown as Parameters<typeof createDeepworkWakeupHook>[0];
-  return { client, promptAsync, messages };
+  return { client, promptAsync, messages, create, prompt, abort };
+}
+
+function makeAdjudicatorClient(adjudicatorResponse: string, lastAssistantText = 'no') {
+  const base = makeClient(lastAssistantText);
+  base.messages = mock(async (args: { path: { id: string } }) => {
+    // Return different responses based on session ID
+    if (args.path.id === 'ses_adjudicator') {
+      return {
+        data: [
+          {
+            info: { role: 'assistant' },
+            parts: [{ type: 'text', text: adjudicatorResponse }],
+          },
+        ],
+      };
+    }
+    return {
+      data: [
+        { info: { role: 'user' }, parts: [{ type: 'text', text: 'q' }] },
+        { info: { role: 'assistant' }, parts: [{ type: 'text', text: lastAssistantText }] },
+      ],
+    };
+  });
+  base.client.session.messages = base.messages;
+  return base;
 }
 
 function idleEvent(sessionId: string) {
@@ -870,6 +902,282 @@ describe('deepwork-wakeup hook', () => {
     // should have aborted.
     // Total promptAsync calls: 1 (done-check only, no continue)
     expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    hook._destroy();
+  });
+
+  // ── Gate-based termination tests ────────────────────────────────────
+
+  function makeGitRepo(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'gate-test-'));
+    execSync('git init -q', { cwd: dir });
+    return dir;
+  }
+
+  test('command gate: pass (exit 0) stops the loop', async () => {
+    const dir = makeGitRepo();
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+      directory: dir,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    // Set a command gate that always passes
+    hook.setGate('ses_orch', { type: 'command', command: 'true' });
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Gate passed → timer cleared, no continue prompt sent
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    expect(timers.has('ses_orch')).toBe(false);
+    expect(promptAsync).not.toHaveBeenCalled();
+  });
+
+  test('command gate: fail (non-zero) sends continue prompt', async () => {
+    const dir = makeGitRepo();
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+      directory: dir,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    // Set a command gate that always fails
+    hook.setGate('ses_orch', { type: 'command', command: 'false' });
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Gate failed → continue prompt sent with gate output
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    const msg = promptAsync.mock.calls[0]?.[0].body.parts[0].text;
+    expect(msg).toContain('gate failed');
+  });
+
+  test('command gate: pass overridden when unreconciled work remains', async () => {
+    const dir = makeGitRepo();
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    // NOT reconciled — terminalUnreconciled is true
+
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+      directory: dir,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    hook.setGate('ses_orch', { type: 'command', command: 'true' });
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Gate passed but unreconciled work → continue prompt sent, timer still running
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    expect(timers.has('ses_orch')).toBe(true);
+
+    hook._destroy();
+  });
+
+  test('adjudicator gate: PASS stops the loop', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, promptAsync, create, prompt, abort } = makeAdjudicatorClient('PASS\nAll clear.');
+
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    hook.setGate('ses_orch', {
+      type: 'adjudicator',
+      prompt: 'Check for blended RVR numbers.',
+      model: 'openai/gpt-4.1-mini',
+    });
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Adjudicator spawned and said PASS → timer cleared
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    expect(timers.has('ses_orch')).toBe(false);
+    expect(promptAsync).not.toHaveBeenCalled(); // no continue prompt on pass
+    expect(abort).toHaveBeenCalledTimes(1); // adjudicator session cleaned up
+  });
+
+  test('adjudicator gate: FAIL sends continue prompt', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, promptAsync } = makeAdjudicatorClient(
+      'FAIL\nSlide 2 has a blended RVR number.',
+    );
+
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    hook.setGate('ses_orch', {
+      type: 'adjudicator',
+      prompt: 'Check for blended RVR numbers.',
+    });
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Adjudicator said FAIL → continue prompt with adjudicator output
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    const msg = promptAsync.mock.calls[0]?.[0].body.parts[0].text;
+    expect(msg).toContain('gate failed');
+    expect(msg).toContain('FAIL');
+    expect(msg).toContain('blended RVR');
+  });
+
+  test('clearing gate reverts to model yes/no done-check', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, promptAsync } = makeClient('yes');
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    // Set a command gate, then clear it
+    hook.setGate('ses_orch', { type: 'command', command: 'true' });
+    hook.setGate('ses_orch', undefined);
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 40));
+
+    // Should use model done-check (sends the yes/no question)
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain('yes or no');
+  });
+
+  test('gate does not fire while background jobs are running', async () => {
+    const dir = makeGitRepo();
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_fix1',
+      parentSessionID: 'ses_orch',
+      agent: 'fixer',
+    });
+    // job still running
+
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+      directory: dir,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    hook.setGate('ses_orch', { type: 'command', command: 'true' });
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Fixer running → gate should not fire
+    expect(promptAsync).not.toHaveBeenCalled();
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    expect(timers.has('ses_orch')).toBe(true); // timer still running, waiting
 
     hook._destroy();
   });
