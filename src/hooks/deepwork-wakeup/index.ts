@@ -203,6 +203,7 @@ interface SessionWakeState {
   wakeInFlight: boolean;
   gate?: LoopGate;
   lastGateFailAt: number;
+  lastBackgroundActivityAt: number;
 }
 
 export interface DeepworkWakeupOptions {
@@ -251,6 +252,7 @@ export function createDeepworkWakeupHook(
         lastBoardSignature: '',
         wakeInFlight: false,
         lastGateFailAt: 0,
+        lastBackgroundActivityAt: 0,
       };
       states.set(sessionID, s);
     }
@@ -979,10 +981,21 @@ export function createDeepworkWakeupHook(
         if (state.gate) {
           const hasRunning = backgroundJobBoard.hasRunning(sessionId);
           const hasUnreconciled = backgroundJobBoard.hasTerminalUnreconciled(sessionId);
-          const cooldownRemaining =
+          // Cooldown: don't fire the gate if it recently FAILed OR if there
+          // was recent background activity. Both give the orchestrator time
+          // to act before the gate re-fires. Without the background-activity
+          // cooldown, the gate fires right after a background job is
+          // reconciled but before the orchestrator processes the result.
+          const now = Date.now();
+          const gateFailCooldown =
             state.lastGateFailAt > 0
-              ? Math.max(0, GATE_FAIL_COOLDOWN_MS - (Date.now() - state.lastGateFailAt))
+              ? Math.max(0, GATE_FAIL_COOLDOWN_MS - (now - state.lastGateFailAt))
               : 0;
+          const bgActivityCooldown =
+            state.lastBackgroundActivityAt > 0
+              ? Math.max(0, GATE_FAIL_COOLDOWN_MS - (now - state.lastBackgroundActivityAt))
+              : 0;
+          const cooldownRemaining = Math.max(gateFailCooldown, bgActivityCooldown);
           log('[deepwork-wakeup] idle: gate-fire guard check', {
             sessionID: sessionId,
             gate: true,
@@ -1025,6 +1038,9 @@ export function createDeepworkWakeupHook(
       hasHadBackgroundWork.add(parentID);
 
       const parentState = getState(parentID);
+      // Record background activity so the gate cooldown knows to wait for
+      // the orchestrator to process this result before re-firing.
+      parentState.lastBackgroundActivityAt = Date.now();
       if (!parentState.idle) return;
       if (parentState.awaitingDoneCheck) return; // done-check in progress, don't interfere
 
