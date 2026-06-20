@@ -397,12 +397,24 @@ export function createDeepworkWakeupHook(
         return false;
       }
 
-      await sessionClient.promptAsync({
-        path: { id: sessionID },
-        body: {
-          parts: [{ type: 'text', text: message }],
-        },
-      });
+      // Race promptAsync against a 10s timeout. If promptAsync hangs (server
+      // not responding, network issue), the timeout fires, wakeInFlight is
+      // reset in the finally block, and the hook isn't permanently blocked.
+      const PROMPT_ASYNC_TIMEOUT_MS = 10_000;
+      await Promise.race([
+        sessionClient.promptAsync({
+          path: { id: sessionID },
+          body: {
+            parts: [{ type: 'text', text: message }],
+          },
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('promptAsync timed out')),
+            PROMPT_ASYNC_TIMEOUT_MS,
+          ),
+        ),
+      ]);
 
       // The prompt will make the orchestrator busy. Set idle=false now to
       // prevent the periodic timer from firing again before the busy event
