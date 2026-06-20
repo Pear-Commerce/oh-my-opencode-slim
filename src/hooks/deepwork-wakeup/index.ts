@@ -894,11 +894,17 @@ export function createDeepworkWakeupHook(
         return;
       }
 
-      // Busy: clear idle state
+      // Busy: clear idle state. Also clear the background-activity cooldown —
+      // the orchestrator going busy means it's processing something (likely
+      // the background result we woke it for). When it goes idle again, the
+      // gate can fire instantly instead of waiting for the 2-min cooldown.
+      // The cooldown only matters if the orchestrator DOESN'T go busy (stays
+      // idle without processing), which is exactly when we want to wait.
       if (isBusyEvent(event)) {
         if (shouldManageSession(sessionId)) {
           const state = getState(sessionId);
           state.idle = false;
+          state.lastBackgroundActivityAt = 0;
         }
         return;
       }
