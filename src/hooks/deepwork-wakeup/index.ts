@@ -52,6 +52,7 @@ const DEFAULT_MAX_NO_PROGRESS = 15; // safety cap on consecutive "no" without pr
 const MESSAGE_READ_DELAY_MS = 500; // let OpenCode write the response before reading
 const DEFAULT_GATE_TIMEOUT_MS = 600_000; // 10 min for gate execution (LLM reviews can be slow)
 const DEFAULT_ADJUDICATOR_MODEL = 'openrouter/anthropic/claude-opus-4.8';
+const GATE_FAIL_COOLDOWN_MS = 120_000; // 2 min cooldown after gate FAIL before re-firing
 
 const GATE_DIR_NAME = '.slim/deepwork/gates';
 
@@ -201,6 +202,7 @@ interface SessionWakeState {
   lastBoardSignature: string;
   wakeInFlight: boolean;
   gate?: LoopGate;
+  lastGateFailAt: number;
 }
 
 export interface DeepworkWakeupOptions {
@@ -248,6 +250,7 @@ export function createDeepworkWakeupHook(
         consecutiveNoProgress: 0,
         lastBoardSignature: '',
         wakeInFlight: false,
+        lastGateFailAt: 0,
       };
       states.set(sessionID, s);
     }
@@ -514,6 +517,7 @@ export function createDeepworkWakeupHook(
       // preview above is truncated for log readability, but the prompt to
       // the orchestrator must be complete.
       const message = `${GATE_FAIL_MESSAGE}\n\n## Gate output\n\`\`\`\n${output}\n\`\`\``;
+      state.lastGateFailAt = Date.now();
       await sendPrompt(sessionID, message, 'gate-fail-continue');
 
       // Track progress for safety cap
@@ -975,6 +979,10 @@ export function createDeepworkWakeupHook(
         if (state.gate) {
           const hasRunning = backgroundJobBoard.hasRunning(sessionId);
           const hasUnreconciled = backgroundJobBoard.hasTerminalUnreconciled(sessionId);
+          const cooldownRemaining =
+            state.lastGateFailAt > 0
+              ? Math.max(0, GATE_FAIL_COOLDOWN_MS - (Date.now() - state.lastGateFailAt))
+              : 0;
           log('[deepwork-wakeup] idle: gate-fire guard check', {
             sessionID: sessionId,
             gate: true,
@@ -983,13 +991,15 @@ export function createDeepworkWakeupHook(
             sentEventWake,
             hasRunning,
             hasUnreconciled,
+            cooldownRemainingMs: cooldownRemaining,
           });
           if (
             !state.awaitingDoneCheck &&
             !state.wakeInFlight &&
             !sentEventWake &&
             !hasRunning &&
-            !hasUnreconciled
+            !hasUnreconciled &&
+            cooldownRemaining === 0
           ) {
             log('[deepwork-wakeup] firing gate directly from idle handler', {
               sessionID: sessionId,
