@@ -931,6 +931,9 @@ export function createDeepworkWakeupHook(
         // If a gate is running (awaitingDoneCheck + gate), just return —
         // the gate will complete on its own and send the result.
         if (state.awaitingDoneCheck && state.gate) {
+          log('[deepwork-wakeup] idle: skipping gate fire (awaitingDoneCheck + gate)', {
+            sessionID: sessionId,
+          });
           return;
         }
 
@@ -965,19 +968,31 @@ export function createDeepworkWakeupHook(
         // sent an event wake to process a reconciled result — the orchestrator
         // needs to process the result first. Firing the gate here would start
         // a new deck review while the fixer result is still being processed.
-        if (
-          state.gate &&
-          !state.awaitingDoneCheck &&
-          !state.wakeInFlight &&
-          !sentEventWake &&
-          !backgroundJobBoard.hasRunning(sessionId) &&
-          !backgroundJobBoard.hasTerminalUnreconciled(sessionId)
-        ) {
-          log('[deepwork-wakeup] firing gate directly from idle handler', {
+        if (state.gate) {
+          const hasRunning = backgroundJobBoard.hasRunning(sessionId);
+          const hasUnreconciled = backgroundJobBoard.hasTerminalUnreconciled(sessionId);
+          log('[deepwork-wakeup] idle: gate-fire guard check', {
             sessionID: sessionId,
-            gateType: state.gate.type,
+            gate: true,
+            awaitingDoneCheck: state.awaitingDoneCheck,
+            wakeInFlight: state.wakeInFlight,
+            sentEventWake,
+            hasRunning,
+            hasUnreconciled,
           });
-          sendDoneCheck(sessionId).catch(() => {});
+          if (
+            !state.awaitingDoneCheck &&
+            !state.wakeInFlight &&
+            !sentEventWake &&
+            !hasRunning &&
+            !hasUnreconciled
+          ) {
+            log('[deepwork-wakeup] firing gate directly from idle handler', {
+              sessionID: sessionId,
+              gateType: state.gate.type,
+            });
+            sendDoneCheck(sessionId).catch(() => {});
+          }
         }
 
         return;
