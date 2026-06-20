@@ -367,22 +367,26 @@ export function createDeepworkWakeupHook(
     state.wakeInFlight = true;
     state.lastWakeAt = now;
 
-    if (wakeDelayMs > 0) {
-      await new Promise((r) => setTimeout(r, wakeDelayMs));
-    }
-
-    // Re-check idle AFTER the delay. The orchestrator may have become busy
-    // during the delay (user message, background completion, etc.). Sending
-    // a prompt to a busy session interrupts active work.
-    if (!state.idle) {
-      log('[deepwork-wakeup] orchestrator became busy during wake delay, aborting', {
-        sessionID,
-        reason,
-      });
-      return false;
-    }
-
+    // Wrap the ENTIRE body in try/finally so wakeInFlight is ALWAYS reset,
+    // even on early returns (e.g. orchestrator became busy during the wake
+    // delay). Previously the finally was inside the inner try block, so an
+    // early return before that block left wakeInFlight stuck true forever.
     try {
+      if (wakeDelayMs > 0) {
+        await new Promise((r) => setTimeout(r, wakeDelayMs));
+      }
+
+      // Re-check idle AFTER the delay. The orchestrator may have become busy
+      // during the delay (user message, background completion, etc.). Sending
+      // a prompt to a busy session interrupts active work.
+      if (!state.idle) {
+        log('[deepwork-wakeup] orchestrator became busy during wake delay, aborting', {
+          sessionID,
+          reason,
+        });
+        return false;
+      }
+
       const sessionClient = client.session as unknown as {
         promptAsync?: (args: {
           path: { id: string };
