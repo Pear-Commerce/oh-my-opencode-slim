@@ -333,6 +333,25 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       shouldManageSession: (sessionID) =>
         isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
       directory: ctx.directory,
+      resolveModel: (sessionID) => {
+        // Resolve the session's configured model so promptAsync uses it
+        // instead of falling back to the default agent's model.
+        const agentName = sessionAgentMap.get(sessionID);
+        const agentDef = agentName
+          ? agentDefs.find((a) => a.name === agentName)
+          : undefined;
+        const modelStr =
+          (typeof agentDef?.config.model === 'string'
+            ? agentDef.config.model
+            : undefined) ?? agentDef?._modelArray?.[0]?.id;
+        if (!modelStr) return undefined;
+        const slash = modelStr.indexOf('/');
+        if (slash <= 0 || slash >= modelStr.length - 1) return undefined;
+        return {
+          providerID: modelStr.slice(0, slash),
+          modelID: modelStr.slice(slash + 1),
+        };
+      },
     });
     // Resolve oracle model for fixer-review auto-review hook
     const oracleAgentDef = agentDefs.find((a) => a.name === 'oracle');

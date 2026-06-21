@@ -221,13 +221,22 @@ export interface DeepworkWakeupOptions {
   directory?: string;
   /** Poll interval for adjudicator response in ms (default 3000). */
   pollIntervalMs?: number;
+  /**
+   * Resolve the model for a session, so promptAsync uses the session's
+   * configured model instead of falling back to the default agent's model.
+   * Returns { providerID, modelID } or undefined.
+   */
+  resolveModel?: (
+    sessionID: string,
+  ) => { providerID: string; modelID: string } | undefined;
 }
 
 export function createDeepworkWakeupHook(
   client: PluginInput['client'],
   options: DeepworkWakeupOptions,
 ) {
-  const { backgroundJobBoard, shouldManageSession, directory } = options;
+  const { backgroundJobBoard, shouldManageSession, directory, resolveModel } =
+    options;
   const dedupWindowMs = options.dedupWindowMs ?? DEFAULT_DEDUP_WINDOW_MS;
   const wakeDelayMs = options.wakeDelayMs ?? DEFAULT_WAKE_DELAY_MS;
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
@@ -397,6 +406,7 @@ export function createDeepworkWakeupHook(
           path: { id: string };
           body: {
             parts: Array<{ type: 'text'; text: string }>;
+            model?: { providerID: string; modelID: string };
           };
         }) => Promise<unknown>;
       };
@@ -405,6 +415,12 @@ export function createDeepworkWakeupHook(
         log('[deepwork-wakeup] promptAsync unavailable', { sessionID });
         return false;
       }
+
+      // Resolve the session's model so promptAsync uses the session's
+      // configured model (e.g. glm-5.2) instead of falling back to the
+      // default agent's model (e.g. gpt-5.5). Without this, every wakeup
+      // call burns the wrong model's credits.
+      const model = resolveModel?.(sessionID);
 
       // Race promptAsync against a 10s timeout. If promptAsync hangs (server
       // not responding, network issue), the timeout fires, wakeInFlight is
@@ -415,6 +431,7 @@ export function createDeepworkWakeupHook(
           path: { id: sessionID },
           body: {
             parts: [{ type: 'text', text: message }],
+            ...(model ? { model } : {}),
           },
         }),
         new Promise<never>((_, reject) =>
