@@ -381,6 +381,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         return {
           providerID: modelStr.slice(0, slash),
           modelID: modelStr.slice(slash + 1),
+          agent: agentName,
         };
       },
     });

@@ -222,18 +222,18 @@ export interface DeepworkWakeupOptions {
   /** Poll interval for adjudicator response in ms (default 3000). */
   pollIntervalMs?: number;
   /**
-   * Resolve the model for a session, so promptAsync uses the session's
-   * configured model instead of falling back to the default agent's model.
-   * Returns { providerID, modelID } or undefined. May be async (e.g. to
-   * query the session's messages when the in-memory map is empty after a
-   * restart).
+   * Resolve the model and agent for a session, so promptAsync uses the
+   * session's configured model instead of falling back to the default
+   * agent's model. Returns { providerID, modelID, agent? } or undefined.
+   * May be async (e.g. to query the session's messages when the in-memory
+   * map is empty after a restart).
    */
   resolveModel?: (
     sessionID: string,
   ) =>
-    | { providerID: string; modelID: string }
+    | { providerID: string; modelID: string; agent?: string }
     | undefined
-    | Promise<{ providerID: string; modelID: string } | undefined>;
+    | Promise<{ providerID: string; modelID: string; agent?: string } | undefined>;
 }
 
 export function createDeepworkWakeupHook(
@@ -412,6 +412,7 @@ export function createDeepworkWakeupHook(
           body: {
             parts: Array<{ type: 'text'; text: string }>;
             model?: { providerID: string; modelID: string };
+            agent?: string;
           };
         }) => Promise<unknown>;
       };
@@ -436,7 +437,7 @@ export function createDeepworkWakeupHook(
           path: { id: sessionID },
           body: {
             parts: [{ type: 'text', text: message }],
-            ...(model ? { model } : {}),
+            ...(model ? { model, ...(model.agent ? { agent: model.agent } : {}) } : {}),
           },
         }),
         new Promise<never>((_, reject) =>
