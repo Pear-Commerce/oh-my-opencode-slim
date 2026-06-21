@@ -333,10 +333,41 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       shouldManageSession: (sessionID) =>
         isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
       directory: ctx.directory,
-      resolveModel: (sessionID) => {
+      resolveModel: async (sessionID) => {
         // Resolve the session's configured model so promptAsync uses it
         // instead of falling back to the default agent's model.
-        const agentName = sessionAgentMap.get(sessionID);
+        let agentName = sessionAgentMap.get(sessionID);
+
+        // After a restart, sessionAgentMap is empty. Query the session's
+        // messages to find the agent from the FIRST message with an agent
+        // field — that's the session's original agent (the user's selection).
+        // Using the last message would be wrong: the wakeup hook's own
+        // promptAsync calls (which may have used the wrong model) create
+        // messages with the default agent, polluting the agent field.
+        if (!agentName) {
+          try {
+            const result = await ctx.client.session.messages({
+              path: { id: sessionID },
+            });
+            const messages = (result.data ?? []) as Array<{
+              info?: { agent?: string };
+            }>;
+            const firstWithAgent = messages.find(
+              (m) => typeof m.info?.agent === 'string',
+            );
+            agentName = firstWithAgent?.info?.agent;
+            if (agentName) {
+              sessionAgentMap.set(sessionID, agentName);
+              log('[plugin] resolved agent from first message for wakeup', {
+                sessionID,
+                agentName,
+              });
+            }
+          } catch {
+            // Session may not exist yet — leave agentName undefined
+          }
+        }
+
         const agentDef = agentName
           ? agentDefs.find((a) => a.name === agentName)
           : undefined;

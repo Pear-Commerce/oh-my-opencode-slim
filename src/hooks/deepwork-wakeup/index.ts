@@ -224,11 +224,16 @@ export interface DeepworkWakeupOptions {
   /**
    * Resolve the model for a session, so promptAsync uses the session's
    * configured model instead of falling back to the default agent's model.
-   * Returns { providerID, modelID } or undefined.
+   * Returns { providerID, modelID } or undefined. May be async (e.g. to
+   * query the session's messages when the in-memory map is empty after a
+   * restart).
    */
   resolveModel?: (
     sessionID: string,
-  ) => { providerID: string; modelID: string } | undefined;
+  ) =>
+    | { providerID: string; modelID: string }
+    | undefined
+    | Promise<{ providerID: string; modelID: string } | undefined>;
 }
 
 export function createDeepworkWakeupHook(
@@ -420,7 +425,7 @@ export function createDeepworkWakeupHook(
       // configured model (e.g. glm-5.2) instead of falling back to the
       // default agent's model (e.g. gpt-5.5). Without this, every wakeup
       // call burns the wrong model's credits.
-      const model = resolveModel?.(sessionID);
+      const model = await resolveModel?.(sessionID);
 
       // Race promptAsync against a 10s timeout. If promptAsync hangs (server
       // not responding, network issue), the timeout fires, wakeInFlight is
