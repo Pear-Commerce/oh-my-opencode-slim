@@ -116,6 +116,16 @@ async function probeJSDOM(): Promise<string | null> {
 // re-runs, it checks this variable and applies the runtime preset instead
 // of the config file's preset. State lives in config/runtime-preset.ts.
 
+/**
+ * Hardcoded model for deepwork wakeup prompts (done-check, reconcile,
+ * continue, gate-fail). Pinned to glm-5p2 so the periodic wakeup turns
+ * never burn gpt tokens, regardless of which orchestrator model the
+ * session is using. The per-session agent is still resolved so the
+ * correct orchestrator prompt is injected; only the model is pinned.
+ * Change here and rebuild (`bun run build`) to use a different wakeup model.
+ */
+const WAKEUP_MODEL = 'fireworks-ai/accounts/fireworks/models/glm-5p2';
+
 const OhMyOpenCodeLite: Plugin = async (ctx) => {
   const sessionId = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15);
   initLogger(sessionId);
@@ -334,8 +344,10 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
       directory: ctx.directory,
       resolveModel: async (sessionID) => {
-        // Resolve the session's configured model so promptAsync uses it
-        // instead of falling back to the default agent's model.
+        // Resolve the session's agent so promptAsync routes to the correct
+        // orchestrator (and the right system prompt is injected). The MODEL
+        // is hardcoded to WAKEUP_MODEL (glm-5p2) — see the constant above the
+        // plugin function — so wakeup turns never burn gpt tokens.
         let agentName = sessionAgentMap.get(sessionID);
 
         // After a restart, sessionAgentMap is empty. Query the session's
@@ -368,19 +380,16 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           }
         }
 
-        const agentDef = agentName
-          ? agentDefs.find((a) => a.name === agentName)
-          : undefined;
-        const modelStr =
-          (typeof agentDef?.config.model === 'string'
-            ? agentDef.config.model
-            : undefined) ?? agentDef?._modelArray?.[0]?.id;
-        if (!modelStr) return undefined;
-        const slash = modelStr.indexOf('/');
-        if (slash <= 0 || slash >= modelStr.length - 1) return undefined;
+        // Model is pinned to WAKEUP_MODEL (glm-5p2) regardless of the
+        // session's configured orchestrator model, so wakeup prompts
+        // (done-check / reconcile / continue / gate-fail) never burn gpt
+        // tokens. The agent is still passed so the correct orchestrator
+        // prompt and context are used.
+        const slash = WAKEUP_MODEL.indexOf('/');
+        if (slash <= 0 || slash >= WAKEUP_MODEL.length - 1) return undefined;
         return {
-          providerID: modelStr.slice(0, slash),
-          modelID: modelStr.slice(slash + 1),
+          providerID: WAKEUP_MODEL.slice(0, slash),
+          modelID: WAKEUP_MODEL.slice(slash + 1),
           agent: agentName,
         };
       },
