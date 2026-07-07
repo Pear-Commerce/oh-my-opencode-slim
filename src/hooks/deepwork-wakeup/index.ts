@@ -54,6 +54,25 @@ const DEFAULT_GATE_TIMEOUT_MS = 600_000; // 10 min for gate execution (LLM revie
 const DEFAULT_ADJUDICATOR_MODEL = 'openrouter/anthropic/claude-opus-4.8';
 const GATE_FAIL_COOLDOWN_MS = 120_000; // 2 min cooldown after gate FAIL before re-firing
 
+/**
+ * HARD-DISABLED: periodic done-check / gate timer.
+ *
+ * When enabled, startTimer() fires a 5s interval that asks the idle
+ * orchestrator "are you done?" and re-prompts it to continue when it says
+ * "no". After a manual abort (user stops the thread), OpenCode emits only
+ * session.idle — no abort event — so the hook cannot distinguish "stopped
+ * by user" from "finished a turn", and the periodic check re-executes the
+ * thread the user just stopped.
+ *
+ * Disabled here by request. Event-driven wakes (background job completion →
+ * wake parent to reconcile) still work via sendPrompt in the idle handler —
+ * only the periodic poll is gone. Gates still fire once per idle event via
+ * the direct-fire path; they just no longer re-fire on a timer.
+ *
+ * Set to true to restore the original periodic done-check behavior.
+ */
+const PERIODIC_DONE_CHECK_ENABLED = false;
+
 const GATE_DIR_NAME = '.slim/deepwork/gates';
 
 /**
@@ -313,6 +332,7 @@ export function createDeepworkWakeupHook(
   }
 
   function startTimer(sessionID: string): void {
+    if (!PERIODIC_DONE_CHECK_ENABLED) return; // hard-disabled — see constant above
     if (timers.has(sessionID)) return; // already running
 
     const timer = setInterval(() => {
