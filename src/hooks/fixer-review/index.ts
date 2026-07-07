@@ -368,10 +368,10 @@ export function createFixerReviewHook(
       if (!enabled) return;
       if (input.tool.toLowerCase() !== 'task') return;
 
-      const captured = input.callID
-        ? capturedCalls.get(input.callID)
-        : undefined;
-      if (captured) capturedCalls.delete(input.callID);
+      const callID = input.callID;
+      if (!callID) return;
+      const captured = capturedCalls.get(callID);
+      if (captured) capturedCalls.delete(callID);
       if (!captured) return;
 
       if (typeof output.output !== 'string') return;

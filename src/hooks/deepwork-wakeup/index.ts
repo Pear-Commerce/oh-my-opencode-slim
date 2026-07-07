@@ -901,11 +901,12 @@ export function createDeepworkWakeupHook(
       const sessionId =
         event.properties?.info?.id ?? event.properties?.sessionID;
 
+      if (!sessionId) return;
+
       // Skip events from adjudicator sessions — they are tool-spawned, not
       // managed orchestrators. Processing their idle/busy events would
       // interfere with the parent's gate execution.
       if (adjudicatorSessions.has(sessionId)) return;
-      if (!sessionId) return;
 
       // Clean up on session deletion
       if (event.type === 'session.deleted') {
