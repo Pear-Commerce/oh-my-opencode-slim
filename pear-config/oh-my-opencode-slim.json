@@ -260,6 +260,57 @@
         "skills": [],
         "mcps": []
       }
+    },
+    "orchestrator-glm52-sol": {
+      "orchestrator": {
+        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "skills": [
+          "*"
+        ],
+        "mcps": [
+          "*",
+          "!context7"
+        ]
+      },
+      "oracle": {
+        "model": "openrouter/openai/gpt-5.6-sol",
+        "variant": "high",
+        "skills": [
+          "simplify"
+        ],
+        "mcps": []
+      },
+      "council": {
+        "model": "openrouter/anthropic/claude-sonnet-4.6",
+        "variant": "high",
+        "skills": [],
+        "mcps": []
+      },
+      "librarian": {
+        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "skills": [],
+        "mcps": [
+          "websearch",
+          "context7",
+          "gh_grep"
+        ]
+      },
+      "explorer": {
+        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "skills": [],
+        "mcps": []
+      },
+      "designer": {
+        "model": "openrouter/anthropic/claude-sonnet-4.6",
+        "variant": "high",
+        "skills": [],
+        "mcps": []
+      },
+      "fixer": {
+        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "skills": [],
+        "mcps": []
+      }
     }
   },
   "disabled_agents": [
@@ -315,6 +366,17 @@
       ]
     },
     "orchestrator-glm52": {
+      "orchestrator_class": true,
+      "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+      "skills": [
+        "*"
+      ],
+      "mcps": [
+        "*",
+        "!context7"
+      ]
+    },
+    "orchestrator-glm52-sol": {
       "orchestrator_class": true,
       "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
       "skills": [
