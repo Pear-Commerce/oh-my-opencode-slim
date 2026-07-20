@@ -167,10 +167,15 @@ echo
 if [ -n "$DESKTOP_APP" ]; then
   echo "  You're running OpenCode Desktop. Config is loaded at startup, so:"
   echo "  1. If OpenCode Desktop is running, quit it completely (Cmd-Q), then reopen."
-  echo "  2. In Desktop, sign in to OpenRouter and Fireworks AI via the in-app"
+  echo "  2. (One-time UI setup) To get the 3-option new-session dialog"
+  echo "     (agent + model + effort) instead of the 2-option view (model + effort),"
+  echo "     enable Show agent: ctrl+p -> Settings -> General -> Show agent -> ON."
+  echo "     This persists across restarts. opencode has no config field for this,"
+  echo "     so it must be toggled in the UI once per machine."
+  echo "  3. In Desktop, sign in to OpenRouter and Fireworks AI via the in-app"
   echo "     auth flow (Settings / account). Pear uses both providers."
   echo "     Alternatively, export FIREWORKS_API_KEY in your shell profile."
-  echo "  3. Confirm the GLM 5.2 model is visible in the Desktop model picker:"
+  echo "  4. Confirm the GLM 5.2 model is visible in the Desktop model picker:"
   echo "       fireworks-ai/accounts/fireworks/models/glm-5p2"
   echo "     If not, refresh models in the picker."
 else
@@ -181,6 +186,12 @@ else
   echo "       opencode models --refresh"
   echo "     You should see 'fireworks-ai/accounts/fireworks/models/glm-5p2'."
   echo "  3. Restart opencode (config is loaded once at startup)."
+  echo "  4. (One-time UI setup) If the new-session dialog shows only model + effort"
+  echo "     with no agent picker, enable Show agent: ctrl+p -> Settings -> Show agent -> ON."
 fi
+echo
+echo '  Note: auto-accept permissions is pre-configured ("permission": "allow" in'
+echo '  opencode.jsonc), so tool calls run without approval prompts. To re-enable'
+echo '  prompts, change "permission" in ~/.config/opencode/opencode.jsonc.'
 echo
 echo "Update later:  git pull && ./install.sh"
