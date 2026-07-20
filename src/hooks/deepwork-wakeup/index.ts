@@ -630,20 +630,18 @@ export function createDeepworkWakeupHook(
         : '';
 
     const message = [
-      'Convergence gate check. You MUST delegate this to your Oracle specialist via the task tool — do not answer PASS or FAIL yourself.',
+      'A convergence gate is already set and running — you are NOT being asked to set, configure, or clear any gate. Do not call set_loop_gate. You are being asked to RUN one gate check: delegate to your Oracle specialist and report its verdict.',
       '',
-      `Call the task tool with subagent_type "${oracleName}" (foreground, not background) and this prompt:`,
+      'Step 1: Call the task tool with subagent_type "' + oracleName + '" (foreground, not background) and this prompt:',
       '```',
       gate.prompt,
       '```' + fileNote,
       '',
-      'The Oracle will respond with PASS or FAIL on its first line.',
+      'Step 2: After the Oracle responds, your ENTIRE reply must be:',
+      '- Line 1: exactly "GATE: PASS" or "GATE: FAIL" (matching the Oracle\'s verdict — nothing else on this line)',
+      '- Lines 2+: the Oracle\'s explanation verbatim',
       '',
-      'After the Oracle responds, reply with EXACTLY one of these on your first line:',
-      '- "GATE: PASS" (if the Oracle said PASS)',
-      '- "GATE: FAIL" (if the Oracle said FAIL)',
-      '',
-      "Then include the Oracle's explanation verbatim on subsequent lines.",
+      'Do NOT add any preface, commentary, or explanation before the "GATE: PASS" / "GATE: FAIL" line. Your first line must be the verdict and only the verdict.',
     ].join('\n');
 
     const sent = await sendPrompt(sessionID, message, 'gate-check');

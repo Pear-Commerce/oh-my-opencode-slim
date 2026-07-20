@@ -1043,6 +1043,11 @@ describe('deepwork-wakeup hook', () => {
     expect(gateCheckMsg).toContain('subagent_type "oracle"');
     expect(gateCheckMsg).toContain('Check for blended RVR numbers.');
     expect(gateCheckMsg).toContain('GATE: PASS');
+    // The prompt must make clear the gate is already set (don't call
+    // set_loop_gate) and the first line must be the verdict (no preface).
+    expect(gateCheckMsg).toContain('already set and running');
+    expect(gateCheckMsg).toContain('Do not call set_loop_gate');
+    expect(gateCheckMsg).toContain('first line must be the verdict');
     expect(create).not.toHaveBeenCalled();
     expect(prompt).not.toHaveBeenCalled();
     expect(abort).not.toHaveBeenCalled();
