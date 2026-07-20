@@ -1036,7 +1036,7 @@ describe('deepwork-wakeup hook', () => {
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
     board.markReconciled('ses_ora1');
 
-    const { client, promptAsync, create, abort } = makeAdjudicatorClient('PASS\nAll clear.');
+    const { client, promptAsync, create, abort, prompt } = makeAdjudicatorClient('PASS\nAll clear.');
 
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
@@ -1066,7 +1066,76 @@ describe('deepwork-wakeup hook', () => {
     expect(timers.has('ses_orch')).toBe(false);
     // promptAsync called once for the adjudicator prompt (not for continue)
     expect(promptAsync).toHaveBeenCalledTimes(1);
-    expect(abort).toHaveBeenCalledTimes(1); // adjudicator session cleaned up
+    // Start notification injected into the parent session (noReply) so the
+    // user can follow the adjudicator in the TUI.
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt.mock.calls[0]?.[0].body.parts[0].text).toContain('Gate adjudicator running');
+    // PASS → adjudicator session left intact for review (not aborted)
+    expect(abort).not.toHaveBeenCalled();
+  });
+
+  test('adjudicator gate: timeout/stall aborts the adjudicator session', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    // Adjudicator session never produces an assistant message → poll times out
+    const promptAsync = mock(async () => {});
+    const messages = mock(async (args: { path: { id: string } }) => {
+      if (args.path.id === 'ses_adjudicator') {
+        return {
+          data: [{ info: { role: 'user' }, parts: [{ type: 'text', text: 'q' }] }],
+        };
+      }
+      return {
+        data: [
+          { info: { role: 'user' }, parts: [{ type: 'text', text: 'q' }] },
+          { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'no' }] },
+        ],
+      };
+    });
+    const create = mock(async () => ({ data: { id: 'ses_adjudicator' } }));
+    const prompt = mock(async () => {});
+    const abort = mock(async () => {});
+    const client = {
+      session: { promptAsync, messages, create, prompt, abort },
+    } as unknown as Parameters<typeof createDeepworkWakeupHook>[0];
+
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+      pollIntervalMs: 0,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    hook.setGate('ses_orch', {
+      type: 'adjudicator',
+      prompt: 'Check for blended RVR numbers.',
+      model: 'openai/gpt-4.1-mini',
+      timeoutMs: 50,
+    });
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 120));
+
+    // Timed out → abort called to stop the stalled session
+    expect(abort).toHaveBeenCalledTimes(1);
+    // Continue prompt sent to orchestrator with the timeout output
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+    const msg = promptAsync.mock.calls[1]?.[0].body.parts[0].text;
+    expect(msg).toContain('gate failed');
+    expect(msg).toContain('timed out');
   });
 
   test('adjudicator gate: attaches files as file parts', async () => {

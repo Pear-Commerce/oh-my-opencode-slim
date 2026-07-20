@@ -43,7 +43,7 @@ import { mkdirSync, readFileSync, writeFileSync, unlinkSync, existsSync } from '
 import { basename, isAbsolute, join } from 'node:path';
 import { log } from '../../utils/logger';
 import type { BackgroundJobBoard } from '../../utils/background-job-board';
-import { type PromptBody, parseModelReference } from '../../utils';
+import { type PromptBody, parseModelReference, shortModelLabel } from '../../utils';
 
 const DEFAULT_DEDUP_WINDOW_MS = 3_000;
 const DEFAULT_WAKE_DELAY_MS = 800;
@@ -664,8 +664,53 @@ export function createDeepworkWakeupHook(
   }
 
   /**
-   * Run an LLM adjudicator gate. The model receives the prompt (and any
-   * attached files) and must respond with PASS or FAIL.
+   * Inject a start notification into the parent orchestrator session so the
+   * user sees immediate feedback while the adjudicator is running and can
+   * follow along in the TUI (ctrl+x ↓) to verify it hasn't stalled.
+   *
+   * `noReply` prevents the orchestrator from responding to this status
+   * message, so it doesn't interfere with the gate flow or hook state.
+   */
+  async function sendAdjudicatorStartNotification(
+    parentSessionID: string,
+    model: string,
+    fileCount: number,
+  ): Promise<void> {
+    const modelLabel = shortModelLabel(model);
+    const fileNote = fileCount > 0 ? ` \u00b7 ${fileCount} file(s)` : '';
+    const message = [
+      `\u2396 Gate adjudicator running \u2014 oracle reviewing (${modelLabel})${fileNote} \u2014 ctrl+x \u2193 to watch`,
+      '',
+      '[system status: continue without acknowledging this notification]',
+    ].join('\n');
+    try {
+      await client.session.prompt({
+        path: { id: parentSessionID },
+        body: {
+          noReply: true,
+          parts: [{ type: 'text', text: message }],
+        },
+        ...(directory ? { query: { directory } } : {}),
+      });
+    } catch (err) {
+      log('[deepwork-wakeup] adjudicator start notification failed', {
+        parentSessionID,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Run an LLM adjudicator gate as a visible Oracle subagent session. The
+   * Oracle receives the prompt (and any attached files) and must respond
+   * with PASS or FAIL.
+   *
+   * The session is created as a child of the orchestrator and a noReply
+   * start notification is injected into the orchestrator so the user can
+   * follow the adjudicator in the TUI (ctrl+x ↓) and verify it hasn't
+   * stalled. On a PASS/FAIL response the session is LEFT INTACT for review
+   * (not aborted); it is only aborted when the poll times out / the
+   * adjudicator stalls, so the runaway generation is stopped.
    *
    * Uses promptAsync + polling instead of prompt() because client.session.prompt
    * may return before the LLM response is persisted, causing extractSessionResult
@@ -691,6 +736,10 @@ export function createDeepworkWakeupHook(
     }
 
     let sessionId: string | undefined;
+    // Tracks whether the adjudicator produced a response. When true, the
+    // session is left intact for review; when false (timeout/stall/error),
+    // the finally block aborts it to stop the runaway generation.
+    let completed = false;
     try {
       const session = await client.session.create({
         body: {
@@ -732,6 +781,15 @@ export function createDeepworkWakeupHook(
         }
       }
 
+      // Notify the parent session so the user can follow along in the TUI
+      // and verify the adjudicator hasn't stalled. noReply prevents the
+      // orchestrator from responding to this status message.
+      await sendAdjudicatorStartNotification(
+        parentSessionID,
+        model,
+        gate.files?.length ?? 0,
+      );
+
       // Use promptAsync to queue the prompt (fire-and-forget), then poll
       // client.session.messages until the assistant response appears.
       const sessionClient = client.session as unknown as {
@@ -764,6 +822,9 @@ export function createDeepworkWakeupHook(
         return { passed: false, output: 'Adjudicator returned empty response or timed out' };
       }
 
+      // Got a response — leave the session intact for review (don't abort).
+      completed = true;
+
       const lower = text.toLowerCase();
       const passed = /^\s*pass\b/.test(lower);
       const failed = /^\s*fail\b/.test(lower);
@@ -784,7 +845,14 @@ export function createDeepworkWakeupHook(
       };
     } finally {
       if (sessionId) {
-        client.session.abort({ path: { id: sessionId } }).catch(() => {});
+        // Only abort when the adjudicator did NOT produce a response (it
+        // stalled or errored) — that stops the runaway generation. On a
+        // completed PASS/FAIL response, leave the session intact so the
+        // user can expand it in the TUI and review the adjudicator's
+        // reasoning.
+        if (!completed) {
+          client.session.abort({ path: { id: sessionId } }).catch(() => {});
+        }
         adjudicatorSessions.delete(sessionId);
       }
     }

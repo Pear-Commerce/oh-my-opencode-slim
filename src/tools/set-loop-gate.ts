@@ -22,9 +22,11 @@ When set, the periodic wakeup timer runs the gate instead of asking "are you don
 the loop termination condition:
 
 - **command gate**: runs a shell command. Exit 0 = pass (stop loop), non-zero = fail (continue).
-- **adjudicator gate**: spawns a cheap LLM with your prompt. The LLM must respond with
-  PASS or FAIL on the first line. Use this for standards that can't be expressed as a
-  single command (e.g. "check for blended RVR numbers in prose").
+- **adjudicator gate**: spawns a visible Oracle subagent session with your prompt. The
+  Oracle must respond with PASS or FAIL on the first line. Use this for standards that
+  can't be expressed as a single command (e.g. "check for blended RVR numbers in prose").
+  The session is visible in the TUI (ctrl+x ↓) so you can follow along and catch stalls;
+  it's left for review on a PASS/FAIL response and aborted only on timeout.
 
 Call with type="clear" to remove the gate and revert to the default yes/no done-check
 (checklist/plan mode).
