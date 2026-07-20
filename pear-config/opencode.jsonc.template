@@ -1,0 +1,43 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "enabled_providers": [
+    "openrouter",
+    "fireworks-ai"
+  ],
+  "provider": {
+    "fireworks-ai": {
+      "models": {
+        "accounts/fireworks/models/glm-5p2": {
+          "name": "GLM 5.2",
+          "limit": {
+            "context": 1000000,
+            "output": 131072
+          }
+        }
+      }
+    }
+  },
+  "model": "openrouter/anthropic/claude-opus-4.7",
+  "small_model": "openrouter/anthropic/claude-haiku-4.5",
+  "plugin": [
+    "__OMO_PLUGIN_PATH__"
+  ],
+  "agent": {
+    "title": {
+      "model": "openrouter/anthropic/claude-haiku-4.5"
+    },
+    "build": {
+      "disable": false
+    },
+    "explore": {
+      "disable": false
+    },
+    "general": {
+      "disable": false
+    },
+    "plan": {
+      "disable": false
+    }
+  },
+  "lsp": true
+}
