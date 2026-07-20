@@ -7,6 +7,13 @@ const z = tool.schema;
 export interface SetLoopGateToolOptions {
   setGate: (sessionID: string, gate: LoopGate | undefined) => void;
   shouldManageSession: (sessionID: string) => boolean;
+  /**
+   * Async fallback when shouldManageSession returns false (e.g. post-restart
+   * with empty sessionAgentMap). Queries the session's messages to resolve
+   * the agent, then checks if it's an orchestrator-class agent. Returns
+   * true if the session is orchestrator-managed.
+   */
+  shouldManageSessionAsync?: (sessionID: string) => Promise<boolean>;
 }
 
 export function createSetLoopGateTool(
@@ -72,9 +79,23 @@ Only callable by orchestrator-class agents in managed sessions.`,
       }
 
       if (!options.shouldManageSession(sessionID)) {
-        throw new Error(
-          'set_loop_gate can only be used in orchestrator sessions',
-        );
+        // Post-restart fallback: sessionAgentMap may be empty because the
+        // chat.message hook hasn't populated it yet (it fires on the
+        // orchestrator's RESPONSE, but the orchestrator tries set_loop_gate
+        // DURING its response). Query the session's messages to resolve the
+        // agent, then re-check.
+        if (options.shouldManageSessionAsync) {
+          const managed = await options.shouldManageSessionAsync(sessionID);
+          if (!managed) {
+            throw new Error(
+              'set_loop_gate can only be used in orchestrator sessions',
+            );
+          }
+        } else {
+          throw new Error(
+            'set_loop_gate can only be used in orchestrator sessions',
+          );
+        }
       }
 
       if (args.type === 'clear') {

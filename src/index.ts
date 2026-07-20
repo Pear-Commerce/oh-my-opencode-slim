@@ -438,6 +438,40 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       setGate: (sessionID, gate) => deepworkWakeupHook.setGate(sessionID, gate),
       shouldManageSession: (sessionID) =>
         isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
+      // Post-restart fallback: sessionAgentMap may be empty because the
+      // chat.message hook hasn't populated it yet (it fires on the
+      // orchestrator's RESPONSE, but the orchestrator tries set_loop_gate
+      // DURING its response). Query the session's messages to find the
+      // agent from the FIRST message with an agent field — that's the
+      // session's original agent (the user's selection).
+      shouldManageSessionAsync: async (sessionID) => {
+        try {
+          const result = await ctx.client.session.messages({
+            path: { id: sessionID },
+          });
+          const messages = (result.data ?? []) as Array<{
+            info?: { agent?: string };
+          }>;
+          const firstWithAgent = messages.find(
+            (m) => typeof m.info?.agent === 'string',
+          );
+          const agentName = firstWithAgent?.info?.agent;
+          if (agentName) {
+            sessionAgentMap.set(sessionID, agentName);
+            log('[plugin] resolved agent from messages for set_loop_gate', {
+              sessionID,
+              agentName,
+            });
+            return isOrchestratorClassAgent(config, agentName);
+          }
+        } catch (err) {
+          log('[plugin] shouldManageSessionAsync failed', {
+            sessionID,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return false;
+      },
     });
 
     toolCount =
