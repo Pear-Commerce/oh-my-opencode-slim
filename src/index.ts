@@ -427,7 +427,6 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       setGate: (sessionID, gate) => deepworkWakeupHook.setGate(sessionID, gate),
       shouldManageSession: (sessionID) =>
         isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
-      defaultAdjudicatorModel: oracleModel,
     });
 
     toolCount =

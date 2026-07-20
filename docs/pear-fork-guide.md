@@ -400,14 +400,14 @@ an automated `/loop` for orchestrator-class sessions. It does three things:
 
    - **`command` gate** — runs a shell command. Exit 0 = pass (stop the
      loop), non-zero = fail (send a continue prompt with the gate output).
-    - **`adjudicator` gate** — spawns a visible Oracle subagent session with a prompt
-      (and optional file attachments) that must respond `PASS` or `FAIL` on its first
-      line. Uses the configured Oracle model by default. Files can be attached for
-      document review. The adjudicator runs as a child session of the orchestrator and
-      injects a `noReply` start notification into the orchestrator ("⎖ Gate adjudicator
-      running — ctrl+x ↓ to watch") so you can follow along in the TUI and verify it
-      hasn't stalled. On a `PASS`/`FAIL` response the session is left intact for review;
-      it's aborted only on timeout/stall to stop the runaway generation.
+    - **`adjudicator` gate** — the hook sends the orchestrator a prescriptive gate-check
+      prompt that makes it spawn an Oracle subagent via the `task` tool with the gate
+      prompt (and optional file paths for the Oracle to read). The Oracle subagent is a
+      normal desktop-visible, clickable, followable subagent — you can watch it live and
+      verify it hasn't stalled, just like any other subagent. The Oracle responds PASS or
+      FAIL; the orchestrator reports it back as "GATE: PASS" or "GATE: FAIL" and the hook
+      stops the loop on PASS or sends a continue prompt on FAIL. The Oracle runs on its
+      configured model (the gate's `model` argument is ignored).
 
    Gates are set via the **`set_loop_gate` tool** (available to
    orchestrator-class agents) and **persist to disk** at

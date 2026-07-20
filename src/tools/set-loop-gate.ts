@@ -7,8 +7,6 @@ const z = tool.schema;
 export interface SetLoopGateToolOptions {
   setGate: (sessionID: string, gate: LoopGate | undefined) => void;
   shouldManageSession: (sessionID: string) => boolean;
-  /** Default adjudicator model (resolved from oracle agent config). */
-  defaultAdjudicatorModel?: string;
 }
 
 export function createSetLoopGateTool(
@@ -22,11 +20,15 @@ When set, the periodic wakeup timer runs the gate instead of asking "are you don
 the loop termination condition:
 
 - **command gate**: runs a shell command. Exit 0 = pass (stop loop), non-zero = fail (continue).
-- **adjudicator gate**: spawns a visible Oracle subagent session with your prompt. The
-  Oracle must respond with PASS or FAIL on the first line. Use this for standards that
-  can't be expressed as a single command (e.g. "check for blended RVR numbers in prose").
-  The session is visible in the TUI (ctrl+x ↓) so you can follow along and catch stalls;
-  it's left for review on a PASS/FAIL response and aborted only on timeout.
+- **adjudicator gate**: sends the orchestrator a gate-check prompt that makes it spawn an
+  Oracle subagent via the \`task\` tool with your prompt. The Oracle subagent is a normal
+  desktop-visible, clickable, followable subagent — you can watch it live and verify it
+  hasn't stalled, just like any other subagent. The Oracle must respond with PASS or FAIL
+  on its first line; the orchestrator reports it back as "GATE: PASS" or "GATE: FAIL" and
+  the hook stops the loop on PASS or sends a continue prompt on FAIL. Use this for standards
+  that can't be expressed as a single command (e.g. "check for blended RVR numbers in prose").
+  The \`model\` argument is accepted for backward compatibility but ignored — the Oracle runs
+  on its configured model. \`files\` are passed as paths in the prompt for the Oracle to read.
 
 Call with type="clear" to remove the gate and revert to the default yes/no done-check
 (checklist/plan mode).
@@ -47,7 +49,7 @@ Only callable by orchestrator-class agents in managed sessions.`,
       model: z
         .string()
         .optional()
-        .describe('Model for adjudicator gate. Must include provider prefix (e.g. "openrouter/anthropic/claude-opus-4.8"). Defaults to the configured oracle model.'),
+        .describe('Ignored for adjudicator gates (the Oracle runs on its configured model). Kept for backward compatibility.'),
       files: z
         .array(z.string())
         .optional()
@@ -98,43 +100,28 @@ Only callable by orchestrator-class agents in managed sessions.`,
         if (!args.prompt) {
           throw new Error('type="adjudicator" requires a "prompt" argument');
         }
-        // Resolve the model. The orchestrator may pass a bare model like
-        // "anthropic/claude-opus-4.8" without the provider prefix, which
-        // causes ProviderModelNotFoundError. If a default model is configured
-        // and the passed model is a suffix of it (e.g. "anthropic/claude-opus-4.8"
-        // matches "openrouter/anthropic/claude-opus-4.8"), use the default
-        // which has the correct provider prefix.
-        let model = args.model ?? options.defaultAdjudicatorModel;
-        if (
-          model &&
-          options.defaultAdjudicatorModel &&
-          options.defaultAdjudicatorModel.endsWith(`/${model}`)
-        ) {
-          model = options.defaultAdjudicatorModel;
-        }
-        if (!model) {
-          throw new Error(
-            'No adjudicator model configured. Pass a model argument with provider prefix (e.g. "openrouter/anthropic/claude-opus-4.8").',
-          );
-        }
+        // The adjudicator gate is now orchestrator-mediated: the hook sends
+        // the orchestrator a gate-check prompt that makes it spawn an Oracle
+        // subagent via the task tool (desktop-visible). The Oracle runs on
+        // its configured model, so `model` is ignored — kept on the gate
+        // object only for backward compatibility.
         const gate: LoopGate = {
           type: 'adjudicator',
           prompt: args.prompt,
-          model,
+          ...(args.model ? { model: args.model } : {}),
           ...(args.timeoutMs ? { timeoutMs: args.timeoutMs } : {}),
           ...(args.files ? { files: args.files } : {}),
         };
         options.setGate(sessionID, gate);
         log('[set_loop_gate] adjudicator gate set', {
           sessionID,
-          model,
           fileCount: args.files?.length ?? 0,
           promptPreview: args.prompt.slice(0, 100),
         });
         const fileNote = args.files?.length
-          ? ` with ${args.files.length} file attachment(s)`
+          ? ` with ${args.files.length} file path(s) for the oracle to read`
           : '';
-        return `Loop gate set to LLM adjudicator (model: ${model})${fileNote}.\nThe loop will continue until the adjudicator responds PASS.`;
+        return `Loop gate set to adjudicator (oracle via task tool, desktop-visible)${fileNote}.\nThe loop will continue until the oracle responds PASS.`;
       }
 
       throw new Error(`Unknown gate type: ${args.type}`);

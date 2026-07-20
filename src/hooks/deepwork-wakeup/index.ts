@@ -40,10 +40,9 @@
 import type { PluginInput } from '@opencode-ai/plugin';
 import { execSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
-import { basename, isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 import { log } from '../../utils/logger';
 import type { BackgroundJobBoard } from '../../utils/background-job-board';
-import { type PromptBody, parseModelReference, shortModelLabel } from '../../utils';
 
 const DEFAULT_DEDUP_WINDOW_MS = 3_000;
 const DEFAULT_WAKE_DELAY_MS = 800;
@@ -51,7 +50,6 @@ const DEFAULT_INTERVAL_MS = 5_000; // 5 seconds — check frequently, no-op when
 const DEFAULT_MAX_NO_PROGRESS = 15; // safety cap on consecutive "no" without progress
 const MESSAGE_READ_DELAY_MS = 500; // let OpenCode write the response before reading
 const DEFAULT_GATE_TIMEOUT_MS = 600_000; // 10 min for gate execution (LLM reviews can be slow)
-const DEFAULT_ADJUDICATOR_MODEL = 'openrouter/anthropic/claude-opus-4.8';
 const GATE_FAIL_COOLDOWN_MS = 120_000; // 2 min cooldown after gate FAIL before re-firing
 
 const GATE_DIR_NAME = '.slim/deepwork/gates';
@@ -116,70 +114,21 @@ const CONTINUE_MESSAGE =
 const GATE_FAIL_MESSAGE =
   'The convergence gate failed. Review the gate output above, fix the issues, and continue.';
 
-const MIME_BY_EXTENSION: Record<string, string> = {
-  pdf: 'application/pdf',
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  svg: 'image/svg+xml',
-  txt: 'text/plain',
-  json: 'application/json',
-  csv: 'text/csv',
-  md: 'text/markdown',
-  html: 'text/html',
-  xml: 'application/xml',
-  zip: 'application/zip',
-};
-
-/**
- * Resolve a file path. Relative paths are resolved against the project
- * directory; absolute paths are used as-is.
- */
-function resolveFilePath(filePath: string, directory: string | undefined): string {
-  if (isAbsolute(filePath) || !directory) return filePath;
-  return join(directory, filePath);
-}
-
-/**
- * Read a file from disk and build a native file part (data URL) for the
- * adjudicator session prompt body. Returns null if the file can't be read.
- */
-function buildFilePart(filePath: string): {
-  type: 'file';
-  mime: string;
-  filename: string;
-  url: string;
-} | null {
-  try {
-    const bytes = readFileSync(filePath);
-    const ext = (filePath.split('.').pop() ?? '').toLowerCase();
-    const mime = MIME_BY_EXTENSION[ext] ?? 'application/octet-stream';
-    const b64 = Buffer.from(bytes).toString('base64');
-    return {
-      type: 'file',
-      mime,
-      filename: basename(filePath),
-      url: `data:${mime};base64,${b64}`,
-    };
-  } catch (error) {
-    log('[deepwork-wakeup] failed to read file for adjudicator attachment', {
-      filePath,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  }
-}
-
 /**
  * Loop gate — replaces the model yes/no done-check with a machine-checkable
  * termination condition for convergence loops ("get this passable according
  * to x standard").
  *
  * - `command`: run a shell command. Exit 0 = pass (stop), non-zero = fail (continue).
- * - `adjudicator`: spawn a cheap LLM with a prompt (and optional file
- *   attachments) that returns PASS or FAIL.
+ * - `adjudicator`: the hook sends the orchestrator a prescriptive gate-check
+ *   prompt that makes it spawn an Oracle subagent via the `task` tool with the
+ *   gate prompt. The Oracle subagent is visible in the desktop TUI (clickable,
+ *   followable — same UX as any task-spawned subagent) so the user can verify
+ *   it hasn't stalled. The orchestrator reports the Oracle's PASS/FAIL verdict
+ *   back; the hook parses it and stops the loop on PASS or sends a continue
+ *   prompt on FAIL. `model` is accepted for backward compatibility but ignored
+ *   — the Oracle runs on its configured model. `files` are passed as paths in
+ *   the gate prompt for the Oracle to read.
  *
  * When no gate is set, the hook uses the model yes/no done-check (checklist
  * mode). When a gate is set, it uses the gate (convergence mode).
@@ -262,13 +211,11 @@ export function createDeepworkWakeupHook(
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
   const maxNoProgress = options.maxNoProgress ?? DEFAULT_MAX_NO_PROGRESS;
   const messageReadDelayMs = options.messageReadDelayMs ?? MESSAGE_READ_DELAY_MS;
-  const pollIntervalMs = options.pollIntervalMs ?? 3_000;
   const periodicDoneCheck = options.periodicDoneCheck ?? true;
 
   const states = new Map<string, SessionWakeState>();
   const hasHadBackgroundWork = new Set<string>();
   const timers = new Map<string, ReturnType<typeof setInterval>>();
-  const adjudicatorSessions = new Set<string>();
   const sessionsSeen = new Set<string>();
 
   function getState(sessionID: string): SessionWakeState {
@@ -505,26 +452,34 @@ export function createDeepworkWakeupHook(
   }
 
   /**
-   * Run a convergence gate (command or LLM adjudicator).
-   * Pass → stop the loop. Fail → send continue prompt.
+   * Run a convergence gate.
+   *
+   * - `command`: run synchronously, act on pass/fail immediately.
+   * - `adjudicator`: send a prescriptive gate-check prompt to the orchestrator
+   *   (fire-and-forget). The orchestrator delegates to the Oracle via the
+   *   `task` tool (desktop-visible subagent) and reports back GATE: PASS/FAIL.
+   *   The verdict is parsed when the orchestrator goes idle again — see
+   *   `handleGateCheckResponse`. `awaitingDoneCheck` stays true until then.
    */
   async function runGate(sessionID: string, gate: LoopGate): Promise<void> {
     const state = getState(sessionID);
     state.awaitingDoneCheck = true; // prevent timer from firing again
 
     try {
-      let passed = false;
-      let output = '';
-
-      if (gate.type === 'command') {
-        const result = runCommandGate(gate);
-        passed = result.passed;
-        output = result.output;
-      } else {
-        const result = await runAdjudicatorGate(sessionID, gate);
-        passed = result.passed;
-        output = result.output;
+      if (gate.type === 'adjudicator') {
+        const sent = await sendGateCheck(sessionID, gate);
+        if (!sent) {
+          // sendPrompt didn't fire (orchestrator not idle / wake in flight) —
+          // release the lock so the next idle can retry.
+          state.awaitingDoneCheck = false;
+        }
+        return;
       }
+
+      // Command gate: run synchronously and act on pass/fail immediately.
+      const result = runCommandGate(gate);
+      let passed = result.passed;
+      let output = result.output;
 
       log('[deepwork-wakeup] gate executed', {
         sessionID,
@@ -547,17 +502,12 @@ export function createDeepworkWakeupHook(
           sessionID,
         });
         clearTimer(sessionID);
-        state.awaitingDoneCheck = false;
         // Clear the persisted gate — the loop is done.
         persistGate(directory, sessionID, undefined);
         return;
       }
 
       // Gate failed — send continue with the gate output.
-      // Don't truncate: the adjudicator's full FAIL diagnosis is actionable
-      // and the orchestrator needs all of it to fix the issues. The log
-      // preview above is truncated for log readability, but the prompt to
-      // the orchestrator must be complete.
       const message = `${GATE_FAIL_MESSAGE}\n\n## Gate output\n\`\`\`\n${output}\n\`\`\``;
       state.lastGateFailAt = Date.now();
       await sendPrompt(sessionID, message, 'gate-fail-continue');
@@ -582,7 +532,12 @@ export function createDeepworkWakeupHook(
         'gate-error-continue',
       );
     } finally {
-      state.awaitingDoneCheck = false;
+      // Command gates ran synchronously — release the lock. Adjudicator
+      // gates keep awaitingDoneCheck=true until the orchestrator responds
+      // (handleGateCheckResponse resets it).
+      if (gate.type === 'command') {
+        state.awaitingDoneCheck = false;
+      }
     }
   }
 
@@ -613,248 +568,193 @@ export function createDeepworkWakeupHook(
   }
 
   /**
-   * Poll client.session.messages until an assistant response with text
-   * content appears, or timeout is reached. Returns the text or null.
+   * Send the adjudicator gate-check prompt to the orchestrator.
+   *
+   * The orchestrator is instructed to delegate to the Oracle via the `task`
+   * tool (foreground) and report the Oracle's PASS/FAIL verdict back as
+   * "GATE: PASS" or "GATE: FAIL" on its first line. The Oracle subagent is
+   * a normal task-tool session, so the desktop renders it as a clickable,
+   * followable subagent — the user can watch it live and verify it hasn't
+   * stalled, just like any other subagent.
+   *
+   * `files` are passed as paths in the prompt for the Oracle to read (the
+   * Oracle has read_files permission). `model` is intentionally not used —
+   * the Oracle runs on its configured model.
+   *
+   * Returns true if the prompt was sent, false if sendPrompt suppressed it
+   * (orchestrator not idle / wake in flight).
    */
-  async function pollForResponse(
-    sid: string,
-    timeoutMs: number,
-  ): Promise<string | null> {
-    const pollIntervalMsLocal = pollIntervalMs;
-    const deadline = Date.now() + timeoutMs;
+  async function sendGateCheck(
+    sessionID: string,
+    gate: { prompt: string; files?: string[] },
+  ): Promise<boolean> {
+    const fileNote =
+      gate.files && gate.files.length > 0
+        ? `\n\nThe Oracle should read these files as part of its review: ${gate.files.join(', ')}`
+        : '';
 
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, pollIntervalMsLocal));
+    const message = [
+      'Convergence gate check. You MUST delegate this to the Oracle via the task tool — do not answer PASS or FAIL yourself.',
+      '',
+      'Call the task tool with subagent_type "oracle" (foreground, not background) and this prompt:',
+      '```',
+      gate.prompt,
+      '```' + fileNote,
+      '',
+      'The Oracle will respond with PASS or FAIL on its first line.',
+      '',
+      'After the Oracle responds, reply with EXACTLY one of these on your first line:',
+      '- "GATE: PASS" (if the Oracle said PASS)',
+      '- "GATE: FAIL" (if the Oracle said FAIL)',
+      '',
+      "Then include the Oracle's explanation verbatim on subsequent lines.",
+    ].join('\n');
 
-      try {
-        const result = await client.session.messages({
-          path: { id: sid },
-          ...(directory ? { query: { directory } } : {}),
-        });
-        const messages = (result.data ?? []) as Array<{
-          info: { role: string };
-          parts: Array<{ type: string; text?: string }>;
-        }>;
-
-        const lastAssistant = [...messages]
-          .reverse()
-          .find((m) => m.info.role === 'assistant');
-        if (!lastAssistant) continue;
-
-        const text = lastAssistant.parts
-          .filter((p) => p.type === 'text' && typeof p.text === 'string')
-          .map((p) => p.text ?? '')
-          .join(' ')
-          .trim();
-
-        if (text) return text;
-      } catch (err) {
-        log('[deepwork-wakeup] adjudicator poll error', {
-          sessionID: sid,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+    const sent = await sendPrompt(sessionID, message, 'gate-check');
+    if (sent) {
+      log('[deepwork-wakeup] gate-check prompt sent to orchestrator', {
+        sessionID,
+        fileCount: gate.files?.length ?? 0,
+      });
     }
-
-    log('[deepwork-wakeup] adjudicator poll timed out', {
-      sessionID: sid,
-      timeoutMs,
-    });
-    return null;
+    return sent;
   }
 
   /**
-   * Inject a start notification into the parent orchestrator session so the
-   * user sees immediate feedback while the adjudicator is running and can
-   * follow along in the TUI (ctrl+x ↓) to verify it hasn't stalled.
-   *
-   * `noReply` prevents the orchestrator from responding to this status
-   * message, so it doesn't interfere with the gate flow or hook state.
+   * Read the orchestrator's last assistant message (the gate-check reply).
+   * Returns the text, or null if unreadable/empty.
    */
-  async function sendAdjudicatorStartNotification(
-    parentSessionID: string,
-    model: string,
-    fileCount: number,
-  ): Promise<void> {
-    const modelLabel = shortModelLabel(model);
-    const fileNote = fileCount > 0 ? ` \u00b7 ${fileCount} file(s)` : '';
-    const message = [
-      `\u2396 Gate adjudicator running \u2014 oracle reviewing (${modelLabel})${fileNote} \u2014 ctrl+x \u2193 to watch`,
-      '',
-      '[system status: continue without acknowledging this notification]',
-    ].join('\n');
+  async function readGateCheckResponse(
+    sessionID: string,
+  ): Promise<string | null> {
     try {
-      await client.session.prompt({
-        path: { id: parentSessionID },
-        body: {
-          noReply: true,
-          parts: [{ type: 'text', text: message }],
-        },
-        ...(directory ? { query: { directory } } : {}),
+      if (messageReadDelayMs > 0) {
+        await new Promise((r) => setTimeout(r, messageReadDelayMs));
+      }
+
+      const result = await client.session.messages({
+        path: { id: sessionID },
       });
+      const messages = (result.data ?? []) as Array<{
+        info: { role: string };
+        parts: Array<{ type: string; text?: string }>;
+      }>;
+
+      const lastAssistant = [...messages]
+        .reverse()
+        .find((m) => m.info.role === 'assistant');
+      if (!lastAssistant) return null;
+
+      const text = lastAssistant.parts
+        .filter((p) => p.type === 'text' && typeof p.text === 'string')
+        .map((p) => p.text ?? '')
+        .join(' ')
+        .trim();
+
+      return text || null;
     } catch (err) {
-      log('[deepwork-wakeup] adjudicator start notification failed', {
-        parentSessionID,
+      log('[deepwork-wakeup] failed to read gate-check response', {
+        sessionID,
         error: err instanceof Error ? err.message : String(err),
       });
+      return null;
     }
   }
 
   /**
-   * Run an LLM adjudicator gate as a visible Oracle subagent session. The
-   * Oracle receives the prompt (and any attached files) and must respond
-   * with PASS or FAIL.
+   * Handle the orchestrator's gate-check response.
+   * Called when the orchestrator goes idle after a gate-check was sent.
    *
-   * The session is created as a child of the orchestrator and a noReply
-   * start notification is injected into the orchestrator so the user can
-   * follow the adjudicator in the TUI (ctrl+x ↓) and verify it hasn't
-   * stalled. On a PASS/FAIL response the session is LEFT INTACT for review
-   * (not aborted); it is only aborted when the poll times out / the
-   * adjudicator stalls, so the runaway generation is stopped.
-   *
-   * Uses promptAsync + polling instead of prompt() because client.session.prompt
-   * may return before the LLM response is persisted, causing extractSessionResult
-   * to read an empty message list.
+   * Parses "GATE: PASS" / "GATE: FAIL" (or a leading PASS/FAIL) from the
+   * orchestrator's reply. PASS → stop the loop. FAIL → send a continue
+   * prompt with the gate output. Ambiguous → default to FAIL (keep working).
    */
-  async function runAdjudicatorGate(
-    parentSessionID: string,
-    gate: {
-      prompt: string;
-      model?: string;
-      timeoutMs?: number;
-      files?: string[];
-    },
-  ): Promise<{ passed: boolean; output: string }> {
-    const model = gate.model ?? DEFAULT_ADJUDICATOR_MODEL;
-    const timeoutMs = gate.timeoutMs ?? DEFAULT_GATE_TIMEOUT_MS;
-    const modelRef = parseModelReference(model);
-    if (!modelRef) {
-      return {
-        passed: false,
-        output: `Invalid adjudicator model format: ${model}`,
-      };
+  async function handleGateCheckResponse(sessionID: string): Promise<void> {
+    const state = getState(sessionID);
+    // Keep awaitingDoneCheck=true during response handling so the periodic
+    // timer doesn't fire another gate-check while we're reading + deciding.
+
+    const text = await readGateCheckResponse(sessionID);
+
+    if (!text) {
+      // Couldn't read response — retry on next interval
+      state.awaitingDoneCheck = false;
+      log('[deepwork-wakeup] gate-check response unreadable, will retry', {
+        sessionID,
+      });
+      return;
     }
 
-    let sessionId: string | undefined;
-    // Tracks whether the adjudicator produced a response. When true, the
-    // session is left intact for review; when false (timeout/stall/error),
-    // the finally block aborts it to stop the runaway generation.
-    let completed = false;
-    try {
-      const session = await client.session.create({
-        body: {
-          parentID: parentSessionID, // child of the orchestrator so it
-          // doesn't show as a top-level session in the UI
-          title: 'deepwork gate adjudicator',
-        },
-        query: directory ? { directory } : undefined,
+    const lower = text.toLowerCase();
+    const firstLine = lower.split('\n')[0] ?? '';
+    const passed = /gate:\s*pass\b/.test(lower) || /^\s*pass\b/.test(firstLine);
+    const failed = /gate:\s*fail\b/.test(lower) || /^\s*fail\b/.test(firstLine);
+
+    log('[deepwork-wakeup] gate-check response parsed', {
+      sessionID,
+      passed,
+      failed,
+      responsePreview: text.slice(0, 200),
+    });
+
+    // Ambiguous (neither matched, or both matched) — default to fail.
+    if (!passed && !failed) {
+      log('[deepwork-wakeup] gate-check response ambiguous, defaulting to fail', {
+        responsePreview: text.slice(0, 100),
       });
-
-      const sid = (session as { data?: { id?: string } }).data?.id;
-      if (!sid) {
-        return { passed: false, output: 'Adjudicator session creation failed' };
-      }
-      sessionId = sid;
-      adjudicatorSessions.add(sid);
-
-      const body: PromptBody = {
-        agent: 'oracle', // non-orchestrator agent so shouldManageSession returns false
-        model: modelRef,
-        tools: { task: false },
-        parts: [
-          {
-            type: 'text',
-            text: `${gate.prompt}\n\nRespond on the first line with either PASS or FAIL. If FAIL, briefly explain why on subsequent lines.`,
-          },
-        ],
-      };
-
-      // Attach files as native file parts so the adjudicator can read them.
-      // Paths are resolved relative to the project directory.
-      if (gate.files && gate.files.length > 0) {
-        for (const filePath of gate.files) {
-          const resolved = resolveFilePath(filePath, directory);
-          const filePart = buildFilePart(resolved);
-          if (filePart) {
-            body.parts.push(filePart);
-          }
-        }
-      }
-
-      // Notify the parent session so the user can follow along in the TUI
-      // and verify the adjudicator hasn't stalled. noReply prevents the
-      // orchestrator from responding to this status message.
-      await sendAdjudicatorStartNotification(
-        parentSessionID,
-        model,
-        gate.files?.length ?? 0,
+      state.awaitingDoneCheck = false;
+      state.lastGateFailAt = Date.now();
+      await sendPrompt(
+        sessionID,
+        `${GATE_FAIL_MESSAGE}\n\n## Gate output\nThe gate-check response was ambiguous (no "GATE: PASS" or "GATE: FAIL" found on the first line). Re-run the gate check: delegate to the Oracle via the task tool and reply with "GATE: PASS" or "GATE: FAIL" on the first line.\n\nYour last reply:\n\`\`\`\n${text.slice(0, 2000)}\n\`\`\``,
+        'gate-ambiguous-continue',
       );
+      return;
+    }
 
-      // Use promptAsync to queue the prompt (fire-and-forget), then poll
-      // client.session.messages until the assistant response appears.
-      const sessionClient = client.session as unknown as {
-        promptAsync?: (args: {
-          path: { id: string };
-          body: PromptBody;
-          query?: { directory: string };
-        }) => Promise<unknown>;
-      };
+    // If both matched, prefer fail (keep working) — safer.
+    const verdictPass = passed && !failed;
 
-      if (typeof sessionClient.promptAsync !== 'function') {
-        return { passed: false, output: 'promptAsync unavailable' };
-      }
-
-      await sessionClient.promptAsync({
-        path: { id: sid },
-        body,
-        query: directory ? { directory } : undefined,
+    // Override pass if there is unreconciled background work
+    if (verdictPass && backgroundJobBoard.hasTerminalUnreconciled(sessionID)) {
+      log('[deepwork-wakeup] gate passed but unreconciled work remains, continuing', {
+        sessionID,
       });
+      state.awaitingDoneCheck = false;
+      state.lastGateFailAt = Date.now();
+      await sendPrompt(
+        sessionID,
+        `${GATE_FAIL_MESSAGE}\n\n## Gate output\nGate passed, but unreconciled background work remains. Reconcile the pending work and continue.`,
+        'gate-pass-override',
+      );
+      return;
+    }
 
-      log('[deepwork-wakeup] adjudicator prompt queued, polling for response', {
-        sessionID: sid,
-        timeoutMs,
+    if (verdictPass) {
+      log('[deepwork-wakeup] gate passed, stopping periodic timer', {
+        sessionID,
       });
+      clearTimer(sessionID);
+      state.awaitingDoneCheck = false;
+      // Clear the persisted gate — the loop is done.
+      persistGate(directory, sessionID, undefined);
+      return;
+    }
 
-      // Poll for the assistant response
-      const text = await pollForResponse(sid, timeoutMs);
+    // verdict === fail — send continue with the gate output (the
+    // orchestrator's reply, which includes the Oracle's explanation).
+    const message = `${GATE_FAIL_MESSAGE}\n\n## Gate output\n\`\`\`\n${text}\n\`\`\``;
+    state.awaitingDoneCheck = false;
+    state.lastGateFailAt = Date.now();
+    await sendPrompt(sessionID, message, 'gate-fail-continue');
 
-      if (!text) {
-        return { passed: false, output: 'Adjudicator returned empty response or timed out' };
-      }
-
-      // Got a response — leave the session intact for review (don't abort).
-      completed = true;
-
-      const lower = text.toLowerCase();
-      const passed = /^\s*pass\b/.test(lower);
-      const failed = /^\s*fail\b/.test(lower);
-
-      if (!passed && !failed) {
-        // Ambiguous — default to fail (keep working)
-        log('[deepwork-wakeup] adjudicator response ambiguous, defaulting to fail', {
-          responsePreview: text.slice(0, 100),
-        });
-        return { passed: false, output: text };
-      }
-
-      return { passed, output: text };
-    } catch (err) {
-      return {
-        passed: false,
-        output: `Adjudicator failed: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    } finally {
-      if (sessionId) {
-        // Only abort when the adjudicator did NOT produce a response (it
-        // stalled or errored) — that stops the runaway generation. On a
-        // completed PASS/FAIL response, leave the session intact so the
-        // user can expand it in the TUI and review the adjudicator's
-        // reasoning.
-        if (!completed) {
-          client.session.abort({ path: { id: sessionId } }).catch(() => {});
-        }
-        adjudicatorSessions.delete(sessionId);
-      }
+    // Track progress for safety cap
+    const sig = boardSignature(sessionID);
+    if (sig === state.lastBoardSignature) {
+      state.consecutiveNoProgress += 1;
+    } else {
+      state.consecutiveNoProgress = 0;
+      state.lastBoardSignature = sig;
     }
   }
 
@@ -988,11 +888,6 @@ export function createDeepworkWakeupHook(
 
       if (!sessionId) return;
 
-      // Skip events from adjudicator sessions — they are tool-spawned, not
-      // managed orchestrators. Processing their idle/busy events would
-      // interfere with the parent's gate execution.
-      if (adjudicatorSessions.has(sessionId)) return;
-
       // Clean up on session deletion
       if (event.type === 'session.deleted') {
         clearTimer(sessionId);
@@ -1039,12 +934,14 @@ export function createDeepworkWakeupHook(
         sessionsSeen.add(sessionId);
 
         // If we were awaiting a done-check, handle the response now.
-        // BUT: if a gate is set, awaitingDoneCheck means the adjudicator is
-        // still running — the gate result comes from runGate (polling the
-        // adjudicator session), NOT from reading the orchestrator's yes/no
-        // response. Calling handleDoneCheckResponse here would misread the
-        // orchestrator's last message as a yes/no answer, send a checklist
-        // continue prompt, and create an infinite wake loop.
+        // BUT: if a gate is set, awaitingDoneCheck means a gate-check is in
+        // flight — the orchestrator was sent the gate-check prompt and is
+        // expected to reply with "GATE: PASS" or "GATE: FAIL" after
+        // delegating to the Oracle via the task tool. Calling
+        // handleDoneCheckResponse here would misread that reply as a yes/no
+        // answer, send a checklist continue prompt, and create an infinite
+        // wake loop. Instead, route gate-check replies to
+        // handleGateCheckResponse.
         if (state.awaitingDoneCheck && !state.gate) {
           await handleDoneCheckResponse(sessionId);
           // After handling, the timer is either cleared (yes) or still running (no).
@@ -1053,12 +950,14 @@ export function createDeepworkWakeupHook(
           return;
         }
 
-        // If a gate is running (awaitingDoneCheck + gate), just return —
-        // the gate will complete on its own and send the result.
+        // A gate-check is in flight (awaitingDoneCheck + gate) — the
+        // orchestrator went idle after replying. Parse the verdict and
+        // stop the loop (PASS) or send a continue prompt (FAIL).
         if (state.awaitingDoneCheck && state.gate) {
-          log('[deepwork-wakeup] idle: skipping gate fire (awaitingDoneCheck + gate)', {
+          log('[deepwork-wakeup] idle: handling gate-check response', {
             sessionID: sessionId,
           });
+          await handleGateCheckResponse(sessionId);
           return;
         }
 
