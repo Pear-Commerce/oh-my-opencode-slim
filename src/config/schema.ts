@@ -55,6 +55,73 @@ export type ManualAgentName = (typeof MANUAL_AGENT_NAMES)[number];
 export type ManualAgentPlan = z.infer<typeof ManualAgentPlanSchema>;
 export type ManualPlan = z.infer<typeof ManualPlanSchema>;
 
+// Specialist names that may be overridden per-orchestrator via `specialists`.
+const SPECIALIST_AGENT_NAMES = [
+  'oracle',
+  'librarian',
+  'explorer',
+  'designer',
+  'fixer',
+  'observer',
+] as const;
+
+export const SpecialistNameSchema = z.enum(SPECIALIST_AGENT_NAMES);
+export type SpecialistName = z.infer<typeof SpecialistNameSchema>;
+
+// Specialist override configuration — a non-recursive subset of
+// AgentOverrideConfigSchema. It deliberately omits orchestrator_class,
+// orchestratorPrompt, displayName, and specialists so that scoped specialist
+// overrides cannot nest orchestrator concerns or recurse.
+export const SpecialistOverrideConfigSchema = z
+  .object({
+    model: z
+      .union([
+        z.string(),
+        z
+          .array(
+            z.union([
+              z.string(),
+              z.object({
+                id: z.string(),
+                variant: z.string().optional(),
+              }),
+            ]),
+          )
+          .min(1),
+      ])
+      .optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    variant: z.string().optional().catch(undefined),
+    skills: z.array(z.string()).optional(), // skills this specialist can use ("*" = all, "!item" = exclude)
+    mcps: z.array(z.string()).optional(), // MCPs this specialist can use ("*" = all, "!item" = exclude)
+    prompt: z.string().min(1).optional(),
+    options: z.record(z.string(), z.unknown()).optional(), // provider-specific model options (e.g., textVerbosity, thinking budget)
+  })
+  .strict();
+
+export type SpecialistOverrideConfig = z.infer<
+  typeof SpecialistOverrideConfigSchema
+>;
+
+// Map of specialist-name → override. Any subset of the six specialist names
+// is allowed. We use z.record(z.string(), ...) plus a key refinement rather
+// than z.record(SpecialistNameSchema, ...) because Zod 4 treats a record
+// keyed by an enum as a COMPLETE record (all enum keys required), which would
+// force every orchestrator to override all six specialists.
+const SpecialistsMapSchema = z
+  .record(z.string(), SpecialistOverrideConfigSchema)
+  .superRefine((value, ctx) => {
+    for (const key of Object.keys(value)) {
+      if (!(SPECIALIST_AGENT_NAMES as readonly string[]).includes(key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `specialists key '${key}' is not a valid specialist name; expected one of: ${SPECIALIST_AGENT_NAMES.join(', ')}`,
+        });
+      }
+    }
+  });
+
 // Agent override configuration (distinct from SDK's AgentConfig)
 export const AgentOverrideConfigSchema = z
   .object({
@@ -88,6 +155,9 @@ export const AgentOverrideConfigSchema = z
       ),
     options: z.record(z.string(), z.unknown()).optional(), // provider-specific model options (e.g., textVerbosity, thinking budget)
     displayName: z.string().min(1).optional(),
+    specialists: SpecialistsMapSchema.optional().describe(
+      'Per-orchestrator specialist overrides. Only valid on orchestrator_class: true custom agents. Each entry scopes a hidden subagent built with the overridden model/variant/skills/mcps, routed to by rewriting the owning orchestrator prompt.',
+    ),
   })
   .strict();
 
@@ -285,6 +355,46 @@ function validateCustomOnlyPromptFields(
   }
 }
 
+/**
+ * Reject `specialists` overrides unless the entry is a custom
+ * orchestrator_class agent. `specialists` is forbidden on built-in/alias
+ * agent entries and on custom agents that are not orchestrator_class: true.
+ */
+function validateSpecialistsOnlyOnOrchestratorClass(
+  overrides: Record<string, z.infer<typeof AgentOverrideConfigSchema>>,
+  ctx: z.RefinementCtx,
+  pathPrefix: Array<string | number>,
+): void {
+  for (const [name, override] of Object.entries(overrides)) {
+    if (override.specialists === undefined) {
+      continue;
+    }
+
+    const isBuiltInOrAlias =
+      (ALL_AGENT_NAMES as readonly string[]).includes(name) ||
+      AGENT_ALIASES[name] !== undefined;
+
+    if (isBuiltInOrAlias) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [...pathPrefix, name, 'specialists'],
+        message:
+          'specialists is only supported on custom orchestrator_class agents',
+      });
+      continue;
+    }
+
+    if (override.orchestrator_class !== true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [...pathPrefix, name, 'specialists'],
+        message:
+          'specialists is only supported on orchestrator_class: true agents',
+      });
+    }
+  }
+}
+
 export const PluginConfigSchema = z
   .object({
     preset: z.string().optional(),
@@ -323,11 +433,16 @@ export const PluginConfigSchema = z
   .superRefine((value, ctx) => {
     if (value.agents) {
       validateCustomOnlyPromptFields(value.agents, ctx, ['agents']);
+      validateSpecialistsOnlyOnOrchestratorClass(value.agents, ctx, ['agents']);
     }
 
     if (value.presets) {
       for (const [presetName, preset] of Object.entries(value.presets)) {
         validateCustomOnlyPromptFields(preset, ctx, ['presets', presetName]);
+        validateSpecialistsOnlyOnOrchestratorClass(preset, ctx, [
+          'presets',
+          presetName,
+        ]);
       }
     }
   });

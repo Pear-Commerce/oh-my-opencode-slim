@@ -8,6 +8,10 @@ export interface AgentDefinition {
   config: AgentConfig;
   /** Priority-ordered model entries for runtime fallback resolution. */
   _modelArray?: Array<{ id: string; variant?: string }>;
+  /** When true, the SDK config is registered with hidden: true. */
+  hidden?: boolean;
+  /** Pre-resolved MCP list; used by scoped specialists to override defaults. */
+  mcps?: string[];
 }
 
 /**

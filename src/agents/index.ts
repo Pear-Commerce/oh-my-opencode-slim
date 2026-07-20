@@ -200,26 +200,69 @@ function injectDisplayNames(
 }
 
 /**
+ * Rewrite the owning orchestrator's prompt so `@<specialist>` (and any
+ * global `@<displayName>` for that specialist) routes to the scoped
+ * specialist subagent instead. Applied ONLY to the owning orchestrator,
+ * after the global displayName injection and extra-prompt append, so it
+ * operates on the fully-assembled prompt. Does not mutate displayNameMap.
+ */
+function injectScopedSpecialistNames(
+  orchestrator: AgentDefinition,
+  remap: Map<string, string>,
+  displayNameMap: Map<string, string>,
+): void {
+  if (remap.size === 0) return;
+  let prompt = orchestrator.config.prompt;
+  if (!prompt) return;
+
+  for (const [specialistName, scopedName] of remap) {
+    const tokens = [specialistName];
+    const globalDisplayName = displayNameMap.get(specialistName);
+    if (globalDisplayName) {
+      tokens.push(normalizeDisplayName(globalDisplayName));
+    }
+    for (const token of tokens) {
+      prompt = prompt.replace(
+        new RegExp(`@${escapeRegExp(token)}\\b`, 'g'),
+        `@${scopedName}`,
+      );
+    }
+  }
+
+  orchestrator.config.prompt = prompt;
+}
+
+/**
  * Apply default permissions to an agent.
  * Sets 'question' permission to 'allow' and includes skill permission presets.
  * If configuredSkills is provided, it honors that list instead of defaults.
  *
  * Note: If the agent already explicitly sets question to 'deny', that is
  * respected (e.g. councillor should not ask questions).
+ *
+ * @param skillAgentName - Optional base agent name used for skill-default
+ *   lookup. When omitted, `agent.name` is used. Scoped specialists pass the
+ *   base specialist name here so they inherit the base's skill defaults when
+ *   no explicit skills list is configured. The question/council_session/
+ *   cancel_task keys always remain keyed on `agent.name`.
  */
 function applyDefaultPermissions(
   agent: AgentDefinition,
   configuredSkills?: string[],
   config?: PluginConfig,
+  skillAgentName?: string,
 ): void {
   const existing = (agent.config.permission ?? {}) as Record<
     string,
     'ask' | 'allow' | 'deny' | Record<string, 'ask' | 'allow' | 'deny'>
   >;
 
-  // Get skill-specific permissions for this agent
+  // Get skill-specific permissions for this agent. When skillAgentName is
+  // provided (scoped specialists), use the base specialist name so the
+  // scoped agent inherits the base's skill defaults when no explicit skills
+  // list is configured.
   const skillPermissions = getSkillPermissionsForAgent(
-    agent.name,
+    skillAgentName ?? agent.name,
     configuredSkills,
   );
 
@@ -434,6 +477,93 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
     return agent;
   });
 
+  // 2c. Build scoped specialists for custom orchestrators that declare a
+  // `specialists` override. Each scoped specialist is a hidden subagent
+  // built with the overridden model/variant/skills/mcps, registered under a
+  // unique `specialist__orchestrator` name. The owning orchestrator's
+  // prompt is rewritten later (injectScopedSpecialistNames) so its
+  // @<specialist> delegations route to the scoped subagent instead of the
+  // preset's specialist. Other orchestrators keep the preset's specialist.
+  const scopedSubAgents: AgentDefinition[] = [];
+  const scopedRemap = new Map<string, Map<string, string>>();
+  const usedScopedNames = new Set<string>();
+  for (const agent of customOrchestrators) {
+    const override = getAgentOverride(config, agent.name);
+    const specialists = override?.specialists;
+    if (!specialists) continue;
+
+    const remap = new Map<string, string>();
+    for (const [specialistName, specialistOverride] of Object.entries(
+      specialists,
+    )) {
+      // Skip disabled specialists — no scoped agent is built and no prompt
+      // rewrite occurs (the owner prompt already excludes disabled agents).
+      if (disabled.has(specialistName)) continue;
+
+      const factory = SUBAGENT_FACTORIES[specialistName as SubagentName];
+      if (!factory) continue; // defensive: schema enum gates valid names
+
+      const scopedName = `${specialistName}__${agent.name}`;
+      if (!SAFE_AGENT_ALIAS_RE.test(scopedName)) {
+        throw new Error(
+          `Scoped specialist name '${scopedName}' must match /^[a-z][a-z0-9_-]*$/i`,
+        );
+      }
+      if (
+        (ALL_AGENT_NAMES as readonly string[]).includes(scopedName) ||
+        customAgentNames.includes(scopedName) ||
+        acpAgentNames.includes(scopedName) ||
+        usedScopedNames.has(scopedName)
+      ) {
+        throw new Error(
+          `Scoped specialist name '${scopedName}' conflicts with an existing agent or scoped name`,
+        );
+      }
+      usedScopedNames.add(scopedName);
+
+      // Load the base specialist's prompt (preset-scoped, same as built-ins).
+      const customPrompts = loadAgentPrompt(specialistName, config?.preset);
+      const scopedAgent = factory(
+        getModelForAgent(specialistName as SubagentName),
+        customPrompts.prompt,
+        customPrompts.appendPrompt,
+      );
+      scopedAgent.name = scopedName;
+      scopedAgent.hidden = true;
+
+      // Apply model/variant/temperature/options overrides (the sol model +
+      // high variant). displayName is not part of SpecialistOverrideConfig,
+      // so scoped agents never get a displayName.
+      applyOverrides(scopedAgent, specialistOverride);
+
+      // MCPs: use the override's mcps if provided, otherwise inherit the
+      // base specialist's resolved MCP list (config override or default).
+      // The trailing ?? [] is defensive; getAgentMcpList already returns [].
+      scopedAgent.mcps =
+        specialistOverride.mcps ??
+        getAgentMcpList(specialistName, config) ??
+        [];
+
+      // Skills/permissions: skill defaults use the BASE specialist name so
+      // the scoped agent inherits the base's bundled skill grants when no
+      // explicit skills list is configured. The question/council_session/
+      // cancel_task keys stay keyed on the scoped agent name.
+      applyDefaultPermissions(
+        scopedAgent,
+        specialistOverride.skills,
+        config,
+        specialistName,
+      );
+
+      scopedSubAgents.push(scopedAgent);
+      remap.set(specialistName, scopedName);
+    }
+
+    if (remap.size > 0) {
+      scopedRemap.set(agent.name, remap);
+    }
+  }
+
   const acpSubAgents = protoAcpAgents.map((agent) => {
     applyDefaultPermissions(agent, undefined, config);
     return agent;
@@ -443,6 +573,7 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
     ...builtInSubAgents,
     ...customSubAgents,
     ...acpSubAgents,
+    ...scopedSubAgents,
   ];
 
   // 3. Create Orchestrator (with its own overrides and custom prompts)
@@ -515,10 +646,25 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
     if (
       (ALL_AGENT_NAMES as readonly string[]).includes(displayName) ||
       customAgentNames.includes(displayName) ||
-      acpAgentNames.includes(displayName)
+      acpAgentNames.includes(displayName) ||
+      usedScopedNames.has(displayName)
     ) {
       throw new Error(
         `displayName '${displayName}' conflicts with an agent name`,
+      );
+    }
+  }
+  // Defensive: scoped names must not collide with built-in/custom/acp names.
+  // This should already be caught at scoped-build time, but re-check here so
+  // the failure surfaces clearly if build-time guards are ever bypassed.
+  for (const scopedName of usedScopedNames) {
+    if (
+      (ALL_AGENT_NAMES as readonly string[]).includes(scopedName) ||
+      customAgentNames.includes(scopedName) ||
+      acpAgentNames.includes(scopedName)
+    ) {
+      throw new Error(
+        `Scoped specialist name '${scopedName}' conflicts with an agent name`,
       );
     }
   }
@@ -548,6 +694,17 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
     const extraPrompt = rewrittenPrompts.join('\n\n');
     for (const primaryOrchestrator of [orchestrator, ...customOrchestrators]) {
       primaryOrchestrator.config.prompt = `${primaryOrchestrator.config.prompt}\n\n${extraPrompt}`;
+    }
+  }
+
+  // 4. Per-owner scoped specialist rewrite — applied LAST, after global
+  // displayName injection and the extra-prompt append, so it operates on
+  // each owning orchestrator's fully-assembled prompt. Only the owner's
+  // prompt is rewritten; other orchestrators keep the preset's specialist.
+  for (const primaryOrchestrator of [orchestrator, ...customOrchestrators]) {
+    const remap = scopedRemap.get(primaryOrchestrator.name);
+    if (remap) {
+      injectScopedSpecialistNames(primaryOrchestrator, remap, displayNameMap);
     }
   }
 
@@ -603,7 +760,9 @@ export function getAgentConfigs(
     } = {
       ...a.config,
       description: a.description,
-      mcps: getAgentMcpList(a.name, config),
+      // Scoped specialists carry a pre-resolved mcps list; others resolve
+      // from config/defaults by agent name.
+      mcps: a.mcps ?? getAgentMcpList(a.name, config),
     };
 
     if (a.displayName) {
@@ -611,6 +770,13 @@ export function getAgentConfigs(
     }
 
     applyClassification(a.name, sdkConfig);
+
+    // Hidden flag from the AgentDefinition (scoped specialists). councillor
+    // is already marked hidden inside applyClassification; this is a no-op
+    // for it and sets hidden:true for scoped specialists.
+    if (a.hidden) {
+      sdkConfig.hidden = true;
+    }
 
     const normalizedDisplayName = a.displayName
       ? normalizeDisplayName(a.displayName)
