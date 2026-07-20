@@ -399,6 +399,17 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           agent: agentName,
         };
       },
+      // Resolve the oracle specialist name for a given orchestrator agent
+      // name. Custom orchestrators with a `specialists` override get a
+      // scoped oracle subagent registered as `oracle__<orchestratorName>`
+      // (with the overridden model, e.g. gpt-5.6-sol); other orchestrators
+      // use the generic `oracle`. The adjudicator gate-check prompt uses
+      // this so the oracle runs on the right model, not the default.
+      resolveOracleSpecialistName: (orchestratorAgentName: string) => {
+        const scopedName = `oracle__${orchestratorAgentName}`;
+        if (agentDefs.some((a) => a.name === scopedName)) return scopedName;
+        return 'oracle';
+      },
     });
     // Resolve oracle model for fixer-review auto-review hook
     const oracleAgentDef = agentDefs.find((a) => a.name === 'oracle');

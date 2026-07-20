@@ -1050,6 +1050,64 @@ describe('deepwork-wakeup hook', () => {
     hook._destroy();
   });
 
+  test('adjudicator gate: uses scoped oracle specialist name when configured', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, promptAsync } = makeClient('GATE: PASS');
+
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+      // Simulate a custom orchestrator (e.g. orchestrator-glm52-sol) with
+      // a scoped oracle specialist (oracle__orchestrator-glm52-sol) that
+      // runs on the overridden model (gpt-5.6-sol). The gate-check prompt
+      // must use the scoped name so the oracle runs on sol, not the
+      // default oracle model (claude 4.8).
+      resolveModel: async () => ({
+        providerID: 'fireworks-ai',
+        modelID: 'accounts/fireworks/models/glm-5p2',
+        agent: 'orchestrator-glm52-sol',
+      }),
+      resolveOracleSpecialistName: (orchestratorAgentName) => {
+        if (orchestratorAgentName === 'orchestrator-glm52-sol') {
+          return 'oracle__orchestrator-glm52-sol';
+        }
+        return 'oracle';
+      },
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    hook.setGate('ses_orch', {
+      type: 'adjudicator',
+      prompt: 'Check for blended RVR numbers.',
+    });
+
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The gate-check prompt uses the scoped oracle name, not the generic
+    // 'oracle', so the orchestrator spawns the scoped specialist (sol).
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    const gateCheckMsg = promptAsync.mock.calls[0]?.[0].body.parts[0].text;
+    expect(gateCheckMsg).toContain('subagent_type "oracle__orchestrator-glm52-sol"');
+    expect(gateCheckMsg).not.toContain('subagent_type "oracle"');
+
+    hook._destroy();
+  });
+
   test('adjudicator gate: PASS stops the loop', async () => {
     const board = new BackgroundJobBoard();
     board.registerLaunch({

@@ -198,13 +198,24 @@ export interface DeepworkWakeupOptions {
     | { providerID: string; modelID: string; agent?: string }
     | undefined
     | Promise<{ providerID: string; modelID: string; agent?: string } | undefined>;
+  /**
+   * Resolve the oracle specialist agent name for a given orchestrator agent
+   * name. Custom orchestrators with a `specialists` override get a scoped
+   * oracle subagent registered as `oracle__<orchestratorName>` (with the
+   * overridden model, e.g. gpt-5.6-sol); other orchestrators use the
+   * generic `oracle`. The hook uses this to put the correct subagent_type
+   * in the adjudicator gate-check prompt so the oracle runs on the right
+   * model (not the default oracle model). Falls back to 'oracle' if not
+   * provided or the orchestrator is unknown.
+   */
+  resolveOracleSpecialistName?: (orchestratorAgentName: string) => string;
 }
 
 export function createDeepworkWakeupHook(
   client: PluginInput['client'],
   options: DeepworkWakeupOptions,
 ) {
-  const { backgroundJobBoard, shouldManageSession, directory, resolveModel } =
+  const { backgroundJobBoard, shouldManageSession, directory, resolveModel, resolveOracleSpecialistName } =
     options;
   const dedupWindowMs = options.dedupWindowMs ?? DEFAULT_DEDUP_WINDOW_MS;
   const wakeDelayMs = options.wakeDelayMs ?? DEFAULT_WAKE_DELAY_MS;
@@ -570,12 +581,19 @@ export function createDeepworkWakeupHook(
   /**
    * Send the adjudicator gate-check prompt to the orchestrator.
    *
-   * The orchestrator is instructed to delegate to the Oracle via the `task`
-   * tool (foreground) and report the Oracle's PASS/FAIL verdict back as
-   * "GATE: PASS" or "GATE: FAIL" on its first line. The Oracle subagent is
-   * a normal task-tool session, so the desktop renders it as a clickable,
-   * followable subagent — the user can watch it live and verify it hasn't
-   * stalled, just like any other subagent.
+   * The orchestrator is instructed to delegate to its Oracle specialist via
+   * the `task` tool (foreground) and report the Oracle's PASS/FAIL verdict
+   * back as "GATE: PASS" or "GATE: FAIL" on its first line. The Oracle
+   * subagent is a normal task-tool session, so the desktop renders it as a
+   * clickable, followable subagent — the user can watch it live and verify
+   * it hasn't stalled, just like any other subagent.
+   *
+   * The oracle specialist name is resolved via `resolveOracleSpecialistName`
+   * so custom orchestrators with a `specialists` override route to their
+   * scoped oracle (e.g. `oracle__orchestrator-glm52-sol`, which runs on the
+   * overridden model) instead of the generic `oracle` (which runs on the
+   * default oracle model). Falls back to 'oracle' if the resolver is not
+   * provided or the orchestrator is unknown.
    *
    * `files` are passed as paths in the prompt for the Oracle to read (the
    * Oracle has read_files permission). `model` is intentionally not used —
@@ -588,15 +606,33 @@ export function createDeepworkWakeupHook(
     sessionID: string,
     gate: { prompt: string; files?: string[] },
   ): Promise<boolean> {
+    // Resolve the orchestrator's agent name so we can look up its scoped
+    // oracle specialist (if any). resolveModel returns the wakeup model
+    // (glm-5p2) but also the session's agent name, which is what we need.
+    let oracleName = 'oracle';
+    try {
+      const model = await resolveModel?.(sessionID);
+      const agentName = model?.agent;
+      if (agentName && resolveOracleSpecialistName) {
+        const resolved = resolveOracleSpecialistName(agentName);
+        if (resolved) oracleName = resolved;
+      }
+    } catch (err) {
+      log('[deepwork-wakeup] failed to resolve oracle specialist name, using generic', {
+        sessionID,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     const fileNote =
       gate.files && gate.files.length > 0
         ? `\n\nThe Oracle should read these files as part of its review: ${gate.files.join(', ')}`
         : '';
 
     const message = [
-      'Convergence gate check. You MUST delegate this to the Oracle via the task tool — do not answer PASS or FAIL yourself.',
+      'Convergence gate check. You MUST delegate this to your Oracle specialist via the task tool — do not answer PASS or FAIL yourself.',
       '',
-      'Call the task tool with subagent_type "oracle" (foreground, not background) and this prompt:',
+      `Call the task tool with subagent_type "${oracleName}" (foreground, not background) and this prompt:`,
       '```',
       gate.prompt,
       '```' + fileNote,
@@ -614,6 +650,7 @@ export function createDeepworkWakeupHook(
     if (sent) {
       log('[deepwork-wakeup] gate-check prompt sent to orchestrator', {
         sessionID,
+        oracleSpecialist: oracleName,
         fileCount: gate.files?.length ?? 0,
       });
     }
