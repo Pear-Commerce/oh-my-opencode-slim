@@ -1049,6 +1049,30 @@ export function createDeepworkWakeupHook(
           startTimer(sessionId);
         }
 
+        // If the periodic done-check is disabled (the default to avoid
+        // re-executing manually-stopped threads), fire a ONE-SHOT done-check
+        // from the idle handler instead. This is event-driven (fires once
+        // per idle event, not every 5s) so deepwork loops don't die after
+        // the orchestrator finishes a phase and goes idle with all
+        // background work reconciled. If the orchestrator says "yes, done"
+        // the loop stops; if "no" it gets a continue prompt and goes busy,
+        // then fires again on the next idle.
+        if (
+          !periodicDoneCheck &&
+          !state.gate &&
+          !state.awaitingDoneCheck &&
+          !state.wakeInFlight &&
+          !sentEventWake &&
+          hasHadBackgroundWork.has(sessionId) &&
+          !backgroundJobBoard.hasRunning(sessionId) &&
+          !backgroundJobBoard.hasTerminalUnreconciled(sessionId)
+        ) {
+          log('[deepwork-wakeup] firing one-shot done-check from idle handler (periodicDoneCheck disabled)', {
+            sessionID: sessionId,
+          });
+          sendDoneCheck(sessionId).catch(() => {});
+        }
+
         // If a gate is set and no background jobs are running, fire the gate
         // directly from the idle handler. Don't rely solely on the periodic
         // timer — if the timer is stuck or not firing, this ensures the gate
