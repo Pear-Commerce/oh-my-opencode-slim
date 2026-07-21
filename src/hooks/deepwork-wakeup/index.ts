@@ -649,9 +649,9 @@ export function createDeepworkWakeupHook(
       '',
       'Step 2: After the Oracle responds, your ENTIRE reply must be:',
       '- Line 1: exactly "GATE: PASS" or "GATE: FAIL" (matching the Oracle\'s verdict — nothing else on this line)',
-      '- Lines 2+: the Oracle\'s explanation verbatim',
+      '- Line 2 (optional): a brief one-line summary of the issue (if FAIL)',
       '',
-      'Do NOT add any preface, commentary, or explanation before the "GATE: PASS" / "GATE: FAIL" line. Your first line must be the verdict and only the verdict.',
+      'Do NOT repeat the Oracle\'s full response — it is visible in the Oracle subagent and already in your context from the task tool output. Do NOT add any preface, commentary, or explanation before the "GATE: PASS" / "GATE: FAIL" line. Your first line must be the verdict and only the verdict.',
     ].join('\n');
 
     const sent = await sendPrompt(sessionID, message, 'gate-check');
@@ -756,7 +756,7 @@ export function createDeepworkWakeupHook(
       state.lastGateFailAt = Date.now();
       await sendPrompt(
         sessionID,
-        `${GATE_FAIL_MESSAGE}\n\n## Gate output\nThe gate-check response was ambiguous (no "GATE: PASS" or "GATE: FAIL" found on the first line). Re-run the gate check: delegate to the Oracle via the task tool and reply with "GATE: PASS" or "GATE: FAIL" on the first line.\n\nYour last reply:\n\`\`\`\n${text.slice(0, 2000)}\n\`\`\``,
+        `${GATE_FAIL_MESSAGE}\n\n## Gate output\nThe gate-check response was ambiguous (no "GATE: PASS" or "GATE: FAIL" found on the first line). Re-run the gate check: delegate to the Oracle via the task tool and reply with "GATE: PASS" or "GATE: FAIL" on the first line. Do NOT repeat the Oracle's full response — just the verdict on line 1.`,
         'gate-ambiguous-continue',
       );
       return;
@@ -793,9 +793,12 @@ export function createDeepworkWakeupHook(
       return;
     }
 
-    // verdict === fail — send continue with the gate output (the
-    // orchestrator's reply, which includes the Oracle's explanation).
-    const message = `${GATE_FAIL_MESSAGE}\n\n## Gate output\n\`\`\`\n${text}\n\`\`\``;
+    // verdict === fail — send continue. The orchestrator already has the
+    // Oracle's full response in its context (from the task tool output), and
+    // the user can click the Oracle subagent to see it. Don't dump the full
+    // text — just the verdict line + brief summary (first 2 lines max).
+    const firstTwoLines = text.split('\n').slice(0, 2).join('\n');
+    const message = `${GATE_FAIL_MESSAGE}\n\n## Gate verdict\n\`\`\`\n${firstTwoLines}\n\`\`\`\n\nReview the Oracle's full feedback in the task tool output above and fix the issues.`;
     state.awaitingDoneCheck = false;
     state.gateCheckPromptSent = false;
     state.lastGateFailAt = Date.now();
