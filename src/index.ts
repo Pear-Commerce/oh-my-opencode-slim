@@ -343,16 +343,12 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       shouldManageSession: (sessionID) =>
         isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
       directory: ctx.directory,
-      // Re-enabled: without the periodic done-check, the orchestrator
-      // finishes a phase, lists next steps, goes idle, and nothing prompts
-      // it to continue — deepwork loops die after the first reconciliation.
-      // The done-check asks "are you done?" and re-prompts on "no".
-      // Tradeoff: after a manual abort, OpenCode emits only session.idle
-      // (no abort event), so the hook can't tell "stopped by user" from
-      // "finished a turn" and the 5s poll may re-execute a stopped thread.
-      // To stop a deepwork loop manually, clear the gate or delete the
-      // session.
-      periodicDoneCheck: true,
+      // Disable the periodic done-check. After a manual abort, OpenCode emits
+      // only session.idle (no abort event), so the hook cannot tell "stopped
+      // by user" from "finished a turn" and the 5s poll re-executes the thread
+      // the user just stopped. Event-driven wakes (background completion →
+      // reconcile) and one-shot gate firing still work.
+      periodicDoneCheck: false,
       resolveModel: async (sessionID) => {
         // Resolve the session's agent so promptAsync routes to the correct
         // orchestrator (and the right system prompt is injected). The MODEL
