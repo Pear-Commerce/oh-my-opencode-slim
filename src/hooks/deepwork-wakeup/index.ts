@@ -670,7 +670,7 @@ export function createDeepworkWakeupHook(
    * Read the orchestrator's last assistant message (the gate-check reply).
    * Returns the text, or null if unreadable/empty.
    */
-  async function readGateCheckResponse(
+   async function readGateCheckResponse(
     sessionID: string,
   ): Promise<string | null> {
     try {
@@ -678,9 +678,19 @@ export function createDeepworkWakeupHook(
         await new Promise((r) => setTimeout(r, messageReadDelayMs));
       }
 
-      const result = await client.session.messages({
-        path: { id: sessionID },
-      });
+      // Race the API call against a timeout — if client.session.messages
+      // hangs, the event handler would be blocked forever and the loop
+      // would die silently.
+      const MESSAGE_READ_TIMEOUT_MS = 10_000;
+      const result = await Promise.race([
+        client.session.messages({ path: { id: sessionID } }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('client.session.messages timed out')),
+            MESSAGE_READ_TIMEOUT_MS,
+          ),
+        ),
+      ]);
       const messages = (result.data ?? []) as Array<{
         info: { role: string };
         parts: Array<{ type: string; text?: string }>;
@@ -818,7 +828,7 @@ export function createDeepworkWakeupHook(
    * Read the last assistant message from a session and parse yes/no.
    * Returns 'yes', 'no', or null (ambiguous/unreadable).
    */
-  async function readDoneCheckResponse(
+   async function readDoneCheckResponse(
     sessionID: string,
   ): Promise<'yes' | 'no' | null> {
     try {
@@ -827,9 +837,19 @@ export function createDeepworkWakeupHook(
         await new Promise((r) => setTimeout(r, messageReadDelayMs));
       }
 
-      const result = await client.session.messages({
-        path: { id: sessionID },
-      });
+      // Race the API call against a timeout — if client.session.messages
+      // hangs, the event handler would be blocked forever and the loop
+      // would die silently.
+      const MESSAGE_READ_TIMEOUT_MS = 10_000;
+      const result = await Promise.race([
+        client.session.messages({ path: { id: sessionID } }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('client.session.messages timed out')),
+            MESSAGE_READ_TIMEOUT_MS,
+          ),
+        ),
+      ]);
       const messages = (result.data ?? []) as Array<{
         info: { role: string };
         parts: Array<{ type: string; text?: string }>;
@@ -882,15 +902,24 @@ export function createDeepworkWakeupHook(
     const state = getState(sessionID);
     // Keep awaitingDoneCheck=true during response handling so the periodic
     // timer doesn't fire another done-check while we're reading + deciding.
+    log('[deepwork-wakeup] handling done-check response', { sessionID });
 
     const answer = await readDoneCheckResponse(sessionID);
 
     if (answer === null) {
-      // Couldn't read response — retry on next interval
+      // Couldn't read response — re-fire the done-check instead of giving
+      // up. Without the periodic timer, nothing else would re-prompt the
+      // orchestrator and the loop would die.
       state.awaitingDoneCheck = false;
-      log('[deepwork-wakeup] done-check response unreadable, will retry', {
+      log('[deepwork-wakeup] done-check response unreadable, re-firing', {
         sessionID,
       });
+      // Small delay before re-firing to avoid a tight loop if the API is
+      // consistently failing.
+      await new Promise((r) => setTimeout(r, 2_000));
+      if (state.idle && !state.wakeInFlight) {
+        sendDoneCheck(sessionID).catch(() => {});
+      }
       return;
     }
 
