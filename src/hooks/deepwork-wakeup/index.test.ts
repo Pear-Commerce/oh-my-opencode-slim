@@ -1113,6 +1113,60 @@ describe('deepwork-wakeup hook', () => {
     hook._destroy();
   });
 
+  test('adjudicator gate: duplicate idle event before prompt sent does not read stale response', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    // The orchestrator's last assistant message is a STALE "GATE: FAIL"
+    // from a previous cycle. A duplicate idle event must NOT read this
+    // before the new gate-check prompt is sent.
+    const { client, promptAsync } = makeClient('GATE: FAIL\nstale response');
+
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 20, // small delay so the second idle event fires before sendGateCheck finishes
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    hook.setGate('ses_orch', {
+      type: 'adjudicator',
+      prompt: 'Check for blended RVR numbers.',
+    });
+
+    // Fire TWO idle events back-to-back (simulates OpenCode emitting
+    // duplicate idle events at the same timestamp).
+    await hook.event(idleEvent('ses_orch'));
+    await hook.event(idleEvent('ses_orch'));
+
+    // Wait for the wake delay + prompt to complete
+    await new Promise((r) => setTimeout(r, 60));
+
+    // Only ONE promptAsync call should have been made (the gate-check
+    // prompt). The duplicate idle event should NOT have triggered
+    // handleGateCheckResponse (which would have read the stale FAIL
+    // and sent a continue prompt — a second promptAsync call).
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    const gateCheckMsg = promptAsync.mock.calls[0]?.[0].body.parts[0].text;
+    expect(gateCheckMsg).toContain('task tool');
+    // The continue prompt (with "gate failed") should NOT have been sent
+    const continueMsg = promptAsync.mock.calls[1]?.[0]?.body?.parts?.[0]?.text;
+    expect(continueMsg).toBeUndefined();
+
+    hook._destroy();
+  });
+
   test('adjudicator gate: PASS stops the loop', async () => {
     const board = new BackgroundJobBoard();
     board.registerLaunch({

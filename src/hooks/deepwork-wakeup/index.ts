@@ -153,6 +153,14 @@ interface SessionWakeState {
   gate?: LoopGate;
   lastGateFailAt: number;
   lastBackgroundActivityAt: number;
+  /**
+   * True only after the adjudicator gate-check prompt has been successfully
+   * sent to the orchestrator (not just requested). Prevents the idle handler
+   * from calling handleGateCheckResponse on a stale message when a duplicate
+   * idle event fires between runGate setting awaitingDoneCheck=true and
+   * sendGateCheck actually sending the prompt.
+   */
+  gateCheckPromptSent: boolean;
 }
 
 export interface DeepworkWakeupOptions {
@@ -241,6 +249,7 @@ export function createDeepworkWakeupHook(
         wakeInFlight: false,
         lastGateFailAt: 0,
         lastBackgroundActivityAt: 0,
+        gateCheckPromptSent: false,
       };
       states.set(sessionID, s);
     }
@@ -475,6 +484,7 @@ export function createDeepworkWakeupHook(
   async function runGate(sessionID: string, gate: LoopGate): Promise<void> {
     const state = getState(sessionID);
     state.awaitingDoneCheck = true; // prevent timer from firing again
+    state.gateCheckPromptSent = false; // reset — set true when sendGateCheck succeeds
 
     try {
       if (gate.type === 'adjudicator') {
@@ -646,6 +656,7 @@ export function createDeepworkWakeupHook(
 
     const sent = await sendPrompt(sessionID, message, 'gate-check');
     if (sent) {
+      getState(sessionID).gateCheckPromptSent = true;
       log('[deepwork-wakeup] gate-check prompt sent to orchestrator', {
         sessionID,
         oracleSpecialist: oracleName,
@@ -708,12 +719,15 @@ export function createDeepworkWakeupHook(
     const state = getState(sessionID);
     // Keep awaitingDoneCheck=true during response handling so the periodic
     // timer doesn't fire another gate-check while we're reading + deciding.
+    // gateCheckPromptSent is reset here so the next gate-check cycle starts
+    // clean (runGate will set it to false, sendGateCheck sets it true again).
 
     const text = await readGateCheckResponse(sessionID);
 
     if (!text) {
       // Couldn't read response — retry on next interval
       state.awaitingDoneCheck = false;
+      state.gateCheckPromptSent = false;
       log('[deepwork-wakeup] gate-check response unreadable, will retry', {
         sessionID,
       });
@@ -738,6 +752,7 @@ export function createDeepworkWakeupHook(
         responsePreview: text.slice(0, 100),
       });
       state.awaitingDoneCheck = false;
+      state.gateCheckPromptSent = false;
       state.lastGateFailAt = Date.now();
       await sendPrompt(
         sessionID,
@@ -756,6 +771,7 @@ export function createDeepworkWakeupHook(
         sessionID,
       });
       state.awaitingDoneCheck = false;
+      state.gateCheckPromptSent = false;
       state.lastGateFailAt = Date.now();
       await sendPrompt(
         sessionID,
@@ -771,6 +787,7 @@ export function createDeepworkWakeupHook(
       });
       clearTimer(sessionID);
       state.awaitingDoneCheck = false;
+      state.gateCheckPromptSent = false;
       // Clear the persisted gate — the loop is done.
       persistGate(directory, sessionID, undefined);
       return;
@@ -780,6 +797,7 @@ export function createDeepworkWakeupHook(
     // orchestrator's reply, which includes the Oracle's explanation).
     const message = `${GATE_FAIL_MESSAGE}\n\n## Gate output\n\`\`\`\n${text}\n\`\`\``;
     state.awaitingDoneCheck = false;
+    state.gateCheckPromptSent = false;
     state.lastGateFailAt = Date.now();
     await sendPrompt(sessionID, message, 'gate-fail-continue');
 
@@ -985,10 +1003,19 @@ export function createDeepworkWakeupHook(
           return;
         }
 
-        // A gate-check is in flight (awaitingDoneCheck + gate) — the
-        // orchestrator went idle after replying. Parse the verdict and
-        // stop the loop (PASS) or send a continue prompt (FAIL).
+        // A gate-check is in flight (awaitingDoneCheck + gate). But only
+        // handle the response if the gate-check prompt was actually sent
+        // (gateCheckPromptSent=true). If a duplicate idle event fires
+        // between runGate setting awaitingDoneCheck=true and sendGateCheck
+        // sending the prompt, gateCheckPromptSent is still false — skip,
+        // the first idle event's sendGateCheck is still in flight.
         if (state.awaitingDoneCheck && state.gate) {
+          if (!state.gateCheckPromptSent) {
+            log('[deepwork-wakeup] idle: gate-check prompt not yet sent, skipping', {
+              sessionID: sessionId,
+            });
+            return;
+          }
           log('[deepwork-wakeup] idle: handling gate-check response', {
             sessionID: sessionId,
           });
