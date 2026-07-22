@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
 import { BackgroundJobBoard } from '../../utils/background-job-board';
-import { createDeepworkWakeupHook, type LoopGate } from './index';
+import { createDeepworkWakeupHook, type LoopGate, type PeriodicConsultation } from './index';
 
 function makeClient(lastAssistantText = 'no') {
   const promptAsync = mock(async () => {});
@@ -1482,6 +1482,145 @@ describe('deepwork-wakeup hook', () => {
     // Session goes idle — timer should start now (gate is set)
     await hook.event(idleEvent('ses_orch'));
     expect(timers.has('ses_orch')).toBe(true);
+
+    hook._destroy();
+  });
+
+  // ── Periodic consultation tests ────────────────────────────────────
+
+  test('periodic consultation: setConsultation starts a timer and fires the prompt', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, promptAsync } = makeClient('no');
+
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    // Set a consultation with a very short interval for testing
+    hook.setConsultation('ses_orch', {
+      prompt: 'Review progress and diagnose big changes.',
+      intervalMinutes: 1, // 1 minute — won't fire in the test window
+    } as PeriodicConsultation);
+
+    // Verify the consultation timer was started
+    const consultationTimers = (hook as unknown as { _consultationTimers: Map<string, unknown> })._consultationTimers;
+    expect(consultationTimers.has('ses_orch')).toBe(true);
+
+    // Clear the consultation
+    hook.setConsultation('ses_orch', undefined);
+    expect(consultationTimers.has('ses_orch')).toBe(false);
+
+    hook._destroy();
+  });
+
+  test('periodic consultation: queued consultation fires when orchestrator goes idle', async () => {
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client, promptAsync } = makeClient('no');
+
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+    });
+
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    // Set a consultation
+    hook.setConsultation('ses_orch', {
+      prompt: 'Review progress.',
+      intervalMinutes: 60,
+    } as PeriodicConsultation);
+
+    // Simulate the timer firing while the orchestrator is busy: set
+    // consultationPending manually, then send a busy event followed by
+    // an idle event.
+    const states = (hook as unknown as { _states: Map<string, { consultationPending: boolean }> })._states;
+    states.get('ses_orch')!.consultationPending = true;
+
+    // Orchestrator goes idle → queued consultation should fire
+    await hook.event(idleEvent('ses_orch'));
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The consultation prompt was sent (not the done-check)
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    const msg = promptAsync.mock.calls[0]?.[0].body.parts[0].text;
+    expect(msg).toContain('Periodic consultation');
+    expect(msg).toContain('task tool');
+    expect(msg).toContain('Review progress.');
+
+    hook._destroy();
+  });
+
+  test('periodic consultation: persists to disk and reloads after restart', async () => {
+    const dir = makeGitRepo();
+    const board = new BackgroundJobBoard();
+    board.registerLaunch({
+      taskID: 'ses_ora1',
+      parentSessionID: 'ses_orch',
+      agent: 'oracle',
+    });
+    board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
+    board.markReconciled('ses_ora1');
+
+    const { client } = makeClient('no');
+
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 30,
+      messageReadDelayMs: 0,
+      directory: dir,
+    });
+
+    // Set a consultation
+    hook.setConsultation('ses_orch', {
+      prompt: 'Review progress.',
+      intervalMinutes: 30,
+      files: ['docs/plan.md'],
+    } as PeriodicConsultation);
+
+    // Verify it was persisted
+    const consultationFile = join(dir, '.slim/deepwork/consultations/ses_orch.json');
+    const { existsSync, readFileSync } = await import('node:fs');
+    expect(existsSync(consultationFile)).toBe(true);
+    const persisted = JSON.parse(readFileSync(consultationFile, 'utf-8'));
+    expect(persisted.prompt).toBe('Review progress.');
+    expect(persisted.intervalMinutes).toBe(30);
+    expect(persisted.files).toEqual(['docs/plan.md']);
+
+    // Clear it — file should be removed
+    hook.setConsultation('ses_orch', undefined);
+    expect(existsSync(consultationFile)).toBe(false);
 
     hook._destroy();
   });

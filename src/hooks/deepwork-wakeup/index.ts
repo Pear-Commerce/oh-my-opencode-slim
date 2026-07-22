@@ -53,6 +53,7 @@ const DEFAULT_GATE_TIMEOUT_MS = 600_000; // 10 min for gate execution (LLM revie
 const GATE_FAIL_COOLDOWN_MS = 120_000; // 2 min cooldown after gate FAIL before re-firing
 
 const GATE_DIR_NAME = '.slim/deepwork/gates';
+const CONSULTATION_DIR_NAME = '.slim/deepwork/consultations';
 
 /**
  * Persist a gate to disk so it survives process restarts.
@@ -102,6 +103,54 @@ function loadPersistedGate(directory: string | undefined, sessionID: string): Lo
   }
 }
 
+/**
+ * Persist a periodic consultation to disk so it survives process restarts.
+ * Written to <directory>/.slim/deepwork/consultations/<sessionID>.json
+ */
+function persistConsultation(directory: string | undefined, sessionID: string, consultation: PeriodicConsultation | undefined): void {
+  if (!directory) return;
+  try {
+    const dir = join(directory, CONSULTATION_DIR_NAME);
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${sessionID}.json`);
+    if (consultation === undefined) {
+      if (existsSync(file)) unlinkSync(file);
+      return;
+    }
+    writeFileSync(file, JSON.stringify(consultation, null, 2));
+  } catch (err) {
+    log('[deepwork-wakeup] failed to persist consultation', {
+      sessionID,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Load a persisted consultation from disk. Called when a managed session is
+ * first seen after a process restart, to restore consultation state.
+ */
+function loadPersistedConsultation(directory: string | undefined, sessionID: string): PeriodicConsultation | undefined {
+  if (!directory) return undefined;
+  try {
+    const file = join(directory, CONSULTATION_DIR_NAME, `${sessionID}.json`);
+    if (!existsSync(file)) return undefined;
+    const content = readFileSync(file, 'utf-8');
+    const consultation = JSON.parse(content) as PeriodicConsultation;
+    log('[deepwork-wakeup] loaded persisted consultation from disk', {
+      sessionID,
+      intervalMinutes: consultation.intervalMinutes,
+    });
+    return consultation;
+  } catch (err) {
+    log('[deepwork-wakeup] failed to load persisted consultation', {
+      sessionID,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  }
+}
+
 const EVENT_WAKEUP_MESSAGE =
   'Background work is ready to reconcile. Review the Background Job Board and continue: reconcile terminal results, validate, and proceed to the next phase or finish if all work is complete.';
 
@@ -143,6 +192,25 @@ export type LoopGate =
       files?: string[];
     };
 
+/**
+ * Periodic consultation — a "babysitter" that fires every X minutes.
+ *
+ * Unlike a gate (which is a convergence loop: keep going until PASS), a
+ * consultation is a periodic check-in: every `intervalMinutes`, the hook
+ * sends the orchestrator a prompt to delegate to its Oracle specialist via
+ * the task tool (desktop-visible subagent). The Oracle reviews progress
+ * and advises; the orchestrator continues with the feedback. No PASS/FAIL,
+ * no loop termination — just periodic consultation.
+ *
+ * Can coexist with a gate: the gate handles termination, the consultation
+ * handles periodic check-ins.
+ */
+export type PeriodicConsultation = {
+  prompt: string;
+  intervalMinutes: number;
+  files?: string[];
+};
+
 interface SessionWakeState {
   idle: boolean;
   lastWakeAt: number;
@@ -161,6 +229,22 @@ interface SessionWakeState {
    * sendGateCheck actually sending the prompt.
    */
   gateCheckPromptSent: boolean;
+  /**
+   * Periodic consultation config. When set, a separate timer fires every
+   * `intervalMinutes` and sends the orchestrator a prompt to delegate to
+   * its Oracle specialist for a progress review.
+   */
+  consultation?: PeriodicConsultation;
+  /**
+   * Timestamp of the last consultation firing. Used to skip if the
+   * orchestrator was busy when the timer fired.
+   */
+  lastConsultationAt: number;
+  /**
+   * True when a consultation was due but the orchestrator was busy — the
+   * consultation is queued and fires when the orchestrator goes idle.
+   */
+  consultationPending: boolean;
 }
 
 export interface DeepworkWakeupOptions {
@@ -235,6 +319,7 @@ export function createDeepworkWakeupHook(
   const states = new Map<string, SessionWakeState>();
   const hasHadBackgroundWork = new Set<string>();
   const timers = new Map<string, ReturnType<typeof setInterval>>();
+  const consultationTimers = new Map<string, ReturnType<typeof setInterval>>();
   const sessionsSeen = new Set<string>();
 
   function getState(sessionID: string): SessionWakeState {
@@ -250,6 +335,8 @@ export function createDeepworkWakeupHook(
         lastGateFailAt: 0,
         lastBackgroundActivityAt: 0,
         gateCheckPromptSent: false,
+        lastConsultationAt: 0,
+        consultationPending: false,
       };
       states.set(sessionID, s);
     }
@@ -667,10 +754,126 @@ export function createDeepworkWakeupHook(
   }
 
   /**
+   * Send a periodic consultation prompt to the orchestrator. The
+   * orchestrator delegates to its Oracle specialist via the task tool
+   * (desktop-visible subagent) for a progress review. No PASS/FAIL — the
+   * Oracle reviews and advises, the orchestrator continues with the
+   * feedback.
+   *
+   * Returns true if the prompt was sent, false if sendPrompt suppressed it
+   * (orchestrator not idle / wake in flight).
+   */
+  async function sendConsultation(
+    sessionID: string,
+    consultation: PeriodicConsultation,
+  ): Promise<boolean> {
+    // Resolve the orchestrator's scoped oracle specialist name (same as
+    // sendGateCheck).
+    let oracleName = 'oracle';
+    try {
+      const model = await resolveModel?.(sessionID);
+      const agentName = model?.agent;
+      if (agentName && resolveOracleSpecialistName) {
+        const resolved = resolveOracleSpecialistName(agentName);
+        if (resolved) oracleName = resolved;
+      }
+    } catch (err) {
+      log('[deepwork-wakeup] failed to resolve oracle specialist name for consultation, using generic', {
+        sessionID,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    const fileNote =
+      consultation.files && consultation.files.length > 0
+        ? `\n\nThe Oracle should read these files as part of its review: ${consultation.files.join(', ')}`
+        : '';
+
+    const message = [
+      'Periodic consultation check-in. Delegate to your Oracle specialist for a progress review.',
+      '',
+      'Step 1: Call the task tool with subagent_type "' + oracleName + '" (foreground, not background) and this prompt:',
+      '```',
+      consultation.prompt,
+      '```' + fileNote,
+      '',
+      'Step 2: After the Oracle responds, review its advice and continue your deepwork accordingly. Incorporate any big changes the Oracle recommends. Do NOT repeat the Oracle\'s full response — it\'s visible in the Oracle subagent. Just briefly note any adjustments you\'re making to the plan, then continue.',
+    ].join('\n');
+
+    const sent = await sendPrompt(sessionID, message, 'consultation');
+    if (sent) {
+      log('[deepwork-wakeup] consultation prompt sent to orchestrator', {
+        sessionID,
+        oracleSpecialist: oracleName,
+        fileCount: consultation.files?.length ?? 0,
+      });
+    }
+    return sent;
+  }
+
+  /**
+   * Start the periodic consultation timer for a session. Fires every
+   * `intervalMinutes` and sends a consultation prompt. If the orchestrator
+   * is busy when the timer fires, the consultation is queued
+   * (consultationPending=true) and fires when the orchestrator goes idle.
+   */
+  function startConsultationTimer(sessionID: string, consultation: PeriodicConsultation): void {
+    // Clear any existing consultation timer for this session.
+    const existing = consultationTimers.get(sessionID);
+    if (existing) clearInterval(existing);
+
+    const intervalMs = consultation.intervalMinutes * 60_000;
+    const timer = setInterval(() => {
+      const state = getState(sessionID);
+      if (!state.consultation) {
+        clearConsultationTimer(sessionID);
+        return;
+      }
+      // If the orchestrator is busy or a wake is in flight, queue the
+      // consultation — it fires when the orchestrator goes idle.
+      if (!state.idle || state.wakeInFlight || state.awaitingDoneCheck) {
+        log('[deepwork-wakeup] consultation timer fired but orchestrator busy, queuing', {
+          sessionID,
+        });
+        state.consultationPending = true;
+        return;
+      }
+      log('[deepwork-wakeup] consultation timer fired, sending', {
+        sessionID,
+        intervalMinutes: consultation.intervalMinutes,
+      });
+      state.consultationPending = false;
+      state.lastConsultationAt = Date.now();
+      sendConsultation(sessionID, consultation).catch((err) => {
+        log('[deepwork-wakeup] consultation send failed', {
+          sessionID,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }, intervalMs);
+
+    // Do NOT unref — same reason as the done-check timer (see startTimer).
+    consultationTimers.set(sessionID, timer);
+    log('[deepwork-wakeup] consultation timer started', {
+      sessionID,
+      intervalMinutes: consultation.intervalMinutes,
+    });
+  }
+
+  function clearConsultationTimer(sessionID: string): void {
+    const timer = consultationTimers.get(sessionID);
+    if (timer) {
+      clearInterval(timer);
+      consultationTimers.delete(sessionID);
+      log('[deepwork-wakeup] consultation timer cleared', { sessionID });
+    }
+  }
+
+  /**
    * Read the orchestrator's last assistant message (the gate-check reply).
    * Returns the text, or null if unreadable/empty.
    */
-   async function readGateCheckResponse(
+  async function readGateCheckResponse(
     sessionID: string,
   ): Promise<string | null> {
     try {
@@ -976,10 +1179,12 @@ export function createDeepworkWakeupHook(
       // Clean up on session deletion
       if (event.type === 'session.deleted') {
         clearTimer(sessionId);
+        clearConsultationTimer(sessionId);
         states.delete(sessionId);
         hasHadBackgroundWork.delete(sessionId);
         sessionsSeen.delete(sessionId);
         persistGate(directory, sessionId, undefined); // remove persisted gate
+        persistConsultation(directory, sessionId, undefined); // remove persisted consultation
         return;
       }
 
@@ -1016,7 +1221,34 @@ export function createDeepworkWakeupHook(
             state.gate = persisted;
           }
         }
+        // Reload any persisted consultation (periodic babysitter) on first
+        // sight after a restart.
+        if (!state.consultation && !sessionsSeen.has(sessionId)) {
+          const persistedConsultation = loadPersistedConsultation(directory, sessionId);
+          if (persistedConsultation) {
+            state.consultation = persistedConsultation;
+            startConsultationTimer(sessionId, persistedConsultation);
+          }
+        }
         sessionsSeen.add(sessionId);
+
+        // If a consultation was queued (timer fired while orchestrator was
+        // busy), fire it now that the orchestrator is idle. Do this BEFORE
+        // the done-check/gate so the babysitter check-in isn't delayed.
+        if (
+          state.consultationPending &&
+          state.consultation &&
+          !state.awaitingDoneCheck &&
+          !state.wakeInFlight
+        ) {
+          log('[deepwork-wakeup] firing queued consultation on idle', {
+            sessionID: sessionId,
+          });
+          state.consultationPending = false;
+          state.lastConsultationAt = Date.now();
+          await sendConsultation(sessionId, state.consultation);
+          return;
+        }
 
         // If we were awaiting a done-check, handle the response now.
         // BUT: if a gate is set, awaitingDoneCheck means a gate-check is in
@@ -1207,15 +1439,53 @@ export function createDeepworkWakeupHook(
       }
     },
 
+    /**
+     * Set a periodic consultation (babysitter) for a session. Every
+     * `intervalMinutes`, the hook sends the orchestrator a prompt to
+     * delegate to its Oracle specialist for a progress review. No
+     * PASS/FAIL — the Oracle reviews and advises, the orchestrator
+     * continues with the feedback. Call with undefined to clear.
+     *
+     * If the orchestrator is busy when the timer fires, the consultation
+     * is queued and fires when the orchestrator goes idle.
+     *
+     * Can coexist with a gate: the gate handles termination, the
+     * consultation handles periodic check-ins.
+     */
+    setConsultation(
+      sessionID: string,
+      consultation: PeriodicConsultation | undefined,
+    ): void {
+      const state = getState(sessionID);
+      state.consultation = consultation;
+      state.consultationPending = false;
+      log('[deepwork-wakeup] consultation set', {
+        sessionID,
+        intervalMinutes: consultation?.intervalMinutes,
+      });
+
+      persistConsultation(directory, sessionID, consultation);
+
+      if (consultation) {
+        startConsultationTimer(sessionID, consultation);
+      } else {
+        clearConsultationTimer(sessionID);
+      }
+    },
+
     /** @internal Exposed for testing */
     _states: states,
     _timers: timers,
+    _consultationTimers: consultationTimers,
     _hasHadBackgroundWork: hasHadBackgroundWork,
 
     /** @internal Clean up all timers (for testing / plugin teardown) */
     _destroy(): void {
       for (const id of timers.keys()) {
         clearTimer(id);
+      }
+      for (const id of consultationTimers.keys()) {
+        clearConsultationTimer(id);
       }
     },
   };

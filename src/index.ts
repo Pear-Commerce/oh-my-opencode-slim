@@ -52,6 +52,7 @@ import {
   createCouncilTool,
   createPresetManager,
   createSetLoopGateTool,
+  createSetPeriodicConsultationTool,
   createWebfetchTool,
 } from './tools';
 import { recordTuiAgentModel, recordTuiAgentModels } from './tui-state';
@@ -174,6 +175,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
   let councilTools: Record<string, unknown>;
   let cancelTaskTools: Record<string, unknown>;
   let setLoopGateTools: Record<string, unknown>;
+  let setPeriodicConsultationTools: Record<string, unknown>;
   let acpRunTools: Record<string, ReturnType<typeof createAcpRunTool>>;
   let webfetch: ReturnType<typeof createWebfetchTool>;
   let rewriteDisplayNameMentions: ReturnType<
@@ -473,11 +475,48 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         return false;
       },
     });
+    // Periodic consultation ("babysitter") tool — same shouldManageSession
+    // + async fallback as set_loop_gate.
+    setPeriodicConsultationTools = createSetPeriodicConsultationTool({
+      setConsultation: (sessionID, consultation) =>
+        deepworkWakeupHook.setConsultation(sessionID, consultation),
+      shouldManageSession: (sessionID) =>
+        isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
+      shouldManageSessionAsync: async (sessionID) => {
+        try {
+          const result = await ctx.client.session.messages({
+            path: { id: sessionID },
+          });
+          const messages = (result.data ?? []) as Array<{
+            info?: { agent?: string };
+          }>;
+          const firstWithAgent = messages.find(
+            (m) => typeof m.info?.agent === 'string',
+          );
+          const agentName = firstWithAgent?.info?.agent;
+          if (agentName) {
+            sessionAgentMap.set(sessionID, agentName);
+            log('[plugin] resolved agent from messages for set_periodic_consultation', {
+              sessionID,
+              agentName,
+            });
+            return isOrchestratorClassAgent(config, agentName);
+          }
+        } catch (err) {
+          log('[plugin] shouldManageSessionAsync failed (consultation)', {
+            sessionID,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return false;
+      },
+    });
 
     toolCount =
       Object.keys(councilTools).length +
       Object.keys(cancelTaskTools).length +
       Object.keys(setLoopGateTools).length +
+      Object.keys(setPeriodicConsultationTools).length +
       Object.keys(acpRunTools).length +
       1 + // webfetch
       2; // ast_grep_search, ast_grep_replace
@@ -565,6 +604,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       ...councilTools,
       ...cancelTaskTools,
       ...setLoopGateTools,
+      ...setPeriodicConsultationTools,
       ...acpRunTools,
       webfetch,
       ast_grep_search,

@@ -6,4 +6,5 @@ export { createCouncilTool } from './council';
 export type { PresetManager } from './preset-manager';
 export { createPresetManager } from './preset-manager';
 export { createSetLoopGateTool } from './set-loop-gate';
+export { createSetPeriodicConsultationTool } from './set-periodic-consultation';
 export { createWebfetchTool } from './smartfetch';
