@@ -245,6 +245,12 @@ interface SessionWakeState {
    * consultation is queued and fires when the orchestrator goes idle.
    */
   consultationPending: boolean;
+  /**
+   * Timestamp when the consultation was first queued (orchestrator was
+   * busy). Used to force-fire after 2x the interval — see
+   * startConsultationTimer.
+   */
+  consultationQueuedAt: number;
 }
 
 export interface DeepworkWakeupOptions {
@@ -337,6 +343,7 @@ export function createDeepworkWakeupHook(
         gateCheckPromptSent: false,
         lastConsultationAt: 0,
         consultationPending: false,
+        consultationQueuedAt: 0,
       };
       states.set(sessionID, s);
     }
@@ -812,6 +819,84 @@ export function createDeepworkWakeupHook(
   }
 
   /**
+   * Force-send a consultation prompt directly via promptAsync, bypassing
+   * the idle/wake checks in sendPrompt. Used when the consultation has
+   * been queued for more than 2x the interval — the orchestrator has been
+   * busy for too long and the check-in can't wait for idle. The prompt
+   * is queued and the orchestrator sees it on its next turn.
+   */
+  async function forceSendConsultation(
+    sessionID: string,
+    consultation: PeriodicConsultation,
+  ): Promise<void> {
+    // Resolve the orchestrator's scoped oracle specialist name.
+    let oracleName = 'oracle';
+    try {
+      const model = await resolveModel?.(sessionID);
+      const agentName = model?.agent;
+      if (agentName && resolveOracleSpecialistName) {
+        const resolved = resolveOracleSpecialistName(agentName);
+        if (resolved) oracleName = resolved;
+      }
+    } catch (err) {
+      log('[deepwork-wakeup] failed to resolve oracle specialist name for force-consultation, using generic', {
+        sessionID,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    const fileNote =
+      consultation.files && consultation.files.length > 0
+        ? `\n\nThe Oracle should read these files as part of its review: ${consultation.files.join(', ')}`
+        : '';
+
+    const message = [
+      'Periodic consultation check-in (FORCED — you have been working for a long time without a check-in). Pause your current work, delegate to your Oracle specialist for a progress review, then continue with the Oracle\'s advice.',
+      '',
+      'Step 1: Call the task tool with subagent_type "' + oracleName + '" (foreground, not background) and this prompt:',
+      '```',
+      consultation.prompt,
+      '```' + fileNote,
+      '',
+      'Step 2: After the Oracle responds, review its advice and continue your deepwork accordingly. Incorporate any big changes the Oracle recommends. Do NOT repeat the Oracle\'s full response — it\'s visible in the Oracle subagent. Just briefly note any adjustments you\'re making to the plan, then continue.',
+    ].join('\n');
+
+    // Send directly via promptAsync — bypasses sendPrompt's idle/wake
+    // checks. The prompt is queued and the orchestrator sees it on its
+    // next turn.
+    const sessionClient = client.session as unknown as {
+      promptAsync?: (args: {
+        path: { id: string };
+        body: {
+          parts: Array<{ type: 'text'; text: string }>;
+          model?: { providerID: string; modelID: string };
+          agent?: string;
+        };
+      }) => Promise<unknown>;
+    };
+
+    if (typeof sessionClient.promptAsync !== 'function') {
+      log('[deepwork-wakeup] promptAsync unavailable for force-consultation', { sessionID });
+      return;
+    }
+
+    const model = await resolveModel?.(sessionID);
+    await sessionClient.promptAsync({
+      path: { id: sessionID },
+      body: {
+        parts: [{ type: 'text', text: message }],
+        ...(model ? { model, ...(model.agent ? { agent: model.agent } : {}) } : {}),
+      },
+    });
+
+    log('[deepwork-wakeup] consultation force-sent to busy orchestrator', {
+      sessionID,
+      oracleSpecialist: oracleName,
+      fileCount: consultation.files?.length ?? 0,
+    });
+  }
+
+  /**
    * Start the periodic consultation timer for a session. Fires every
    * `intervalMinutes` and sends a consultation prompt. If the orchestrator
    * is busy when the timer fires, the consultation is queued
@@ -832,8 +917,34 @@ export function createDeepworkWakeupHook(
       // If the orchestrator is busy or a wake is in flight, queue the
       // consultation — it fires when the orchestrator goes idle.
       if (!state.idle || state.wakeInFlight || state.awaitingDoneCheck) {
+        // Track when the consultation was FIRST queued. If it's been
+        // pending for more than 2x the interval, force-fire it directly
+        // via promptAsync (bypassing the idle check) so the orchestrator
+        // sees it on its next turn — no more than 2 intervals should
+        // pass without a check-in, even during long busy stretches.
+        if (!state.consultationPending) {
+          state.consultationQueuedAt = Date.now();
+        }
+        const pendingMs = Date.now() - state.consultationQueuedAt;
+        if (state.consultationPending && pendingMs >= 2 * intervalMs) {
+          log('[deepwork-wakeup] consultation force-fire threshold reached, sending directly', {
+            sessionID,
+            pendingMs,
+            thresholdMs: 2 * intervalMs,
+          });
+          state.consultationPending = false;
+          state.lastConsultationAt = Date.now();
+          forceSendConsultation(sessionID, consultation).catch((err) => {
+            log('[deepwork-wakeup] consultation force-send failed', {
+              sessionID,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+          return;
+        }
         log('[deepwork-wakeup] consultation timer fired but orchestrator busy, queuing', {
           sessionID,
+          pendingMs: state.consultationPending ? pendingMs : 0,
         });
         state.consultationPending = true;
         return;
