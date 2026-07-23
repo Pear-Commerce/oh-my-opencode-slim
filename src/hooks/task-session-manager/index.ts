@@ -25,7 +25,7 @@ interface TaskArgs {
 interface PendingTaskCall {
   callId: string;
   parentSessionId: string;
-  agentType: AgentName;
+  agentType: string;
   label: string;
   resumedTaskId?: string;
 }
@@ -108,8 +108,20 @@ function createOccurrenceId(
   return `anon:${hash}`;
 }
 
-function isAgentName(value: unknown): value is AgentName {
-  return typeof value === 'string' && AGENT_NAME_SET.has(value as AgentName);
+function isAgentName(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  // Base agent names (oracle, fixer, etc.)
+  if (AGENT_NAME_SET.has(value as AgentName)) return true;
+  // Scoped specialist names (oracle__orchestrator-glm52-sol, etc.)
+  // These are built by the agents system for custom orchestrators with
+  // a specialists override. The base specialist name before '__' must
+  // be a valid subagent name.
+  const sepIndex = value.indexOf('__');
+  if (sepIndex > 0 && sepIndex < value.length - 2) {
+    const baseName = value.slice(0, sepIndex);
+    return AGENT_NAME_SET.has(baseName as AgentName);
+  }
+  return false;
 }
 
 function extractPath(output: string): string | undefined {
