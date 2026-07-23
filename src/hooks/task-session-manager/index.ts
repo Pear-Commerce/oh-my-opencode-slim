@@ -530,10 +530,20 @@ export function createTaskSessionManagerHook(
       rememberPendingCall(pendingCall);
 
       if (typeof args.task_id !== 'string' || args.task_id.trim() === '') {
+        log('[task-session-manager] task call without task_id', {
+          sessionID: input.sessionID,
+          agentType: args.subagent_type,
+        });
         return;
       }
 
       const requested = args.task_id.trim();
+      log('[task-session-manager] task call with task_id, attempting resolveReusable', {
+        sessionID: input.sessionID,
+        agentType: args.subagent_type,
+        requestedTaskId: requested,
+      });
+
       const remembered = backgroundJobBoard.resolveReusable(
         input.sessionID,
         requested,
@@ -541,15 +551,33 @@ export function createTaskSessionManagerHook(
       );
 
       if (!remembered) {
+        log('[task-session-manager] resolveReusable returned undefined', {
+          sessionID: input.sessionID,
+          requestedTaskId: requested,
+          isRawSessionId: RAW_SESSION_ID_PATTERN.test(requested),
+          jobsOnBoard: backgroundJobBoard.list(input.sessionID).map(j => ({ taskID: j.taskID, alias: j.alias, agent: j.agent, state: j.state, terminalUnreconciled: j.terminalUnreconciled })),
+        });
         if (RAW_SESSION_ID_PATTERN.test(requested)) {
           pendingCall.resumedTaskId = requested;
           rememberPendingCall(pendingCall);
           return;
         }
         delete args.task_id;
+        log('[task-session-manager] deleted task_id (alias not found, not raw session ID)', {
+          sessionID: input.sessionID,
+          requestedTaskId: requested,
+        });
         return;
       }
 
+      log('[task-session-manager] resolveReusable found job, passing task_id', {
+        sessionID: input.sessionID,
+        requestedTaskId: requested,
+        resolvedTaskId: remembered.taskID,
+        alias: remembered.alias,
+        agent: remembered.agent,
+        state: remembered.state,
+      });
       args.task_id = remembered.taskID;
       pendingManagedTaskIds.add(remembered.taskID);
       backgroundJobBoard.markUsed(input.sessionID, remembered.taskID);
