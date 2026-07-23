@@ -122,7 +122,7 @@ describe('BackgroundJobBoard', () => {
     expect(board.formatForPrompt('parent-1')).toContain('Reusable Sessions');
   });
 
-  test('does not expose unreconciled terminal jobs as reusable', () => {
+  test('exposes completed terminal jobs as reusable even when unreconciled', () => {
     const board = new BackgroundJobBoard();
     board.registerLaunch({
       taskID: 'ses_1',
@@ -137,7 +137,12 @@ describe('BackgroundJobBoard', () => {
     expect(prompt).toContain(
       'ora-1 / ses_1 / oracle / completed, unreconciled',
     );
-    expect(prompt).toContain('#### Reusable Sessions\n- none');
+    // Completed sessions are reusable even when unreconciled —
+    // terminalUnreconciled means the orchestrator hasn't processed the
+    // result yet, not that the session can't be resumed. This allows
+    // foreground tasks (e.g. oracle consultations) to be resumed in the
+    // same turn before reconciliation happens.
+    expect(prompt).toContain('ora-1 / ses_1 / oracle / completed');
   });
 
   test('does not expose cancelled or errored jobs as reusable', () => {

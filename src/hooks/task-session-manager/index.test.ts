@@ -1068,7 +1068,7 @@ describe('task-session-manager hook', () => {
     expect(resume.args.task_id).toBe('child-1');
   });
 
-  test('only reconciled completed jobs resolve as reusable task sessions', async () => {
+  test('completed jobs resolve as reusable task sessions (even when unreconciled)', async () => {
     const board = new BackgroundJobBoard();
     const { hook } = createHook({ backgroundJobBoard: board });
 
@@ -1088,6 +1088,9 @@ describe('task-session-manager hook', () => {
     board.updateStatus({ taskID: 'err-1', state: 'error' });
     board.markReconciled('err-1');
 
+    // Completed jobs are reusable even when unreconciled — this allows
+    // foreground tasks (e.g. oracle consultations) to be resumed in the
+    // same turn before reconciliation happens.
     const unreconciled = {
       args: { subagent_type: 'oracle', task_id: 'ora-1' },
     };
@@ -1095,16 +1098,17 @@ describe('task-session-manager hook', () => {
       { tool: 'task', sessionID: 'parent-1', callID: 'call-1' },
       unreconciled,
     );
-    expect(unreconciled.args.task_id).toBeUndefined();
+    expect(unreconciled.args.task_id).toBe('done-1');
 
-    board.markReconciled('done-1');
-
+    // Errored jobs are NOT reusable even when reconciled.
     const failed = { args: { subagent_type: 'oracle', task_id: 'ora-2' } };
     await hook['tool.execute.before'](
       { tool: 'task', sessionID: 'parent-1', callID: 'call-2' },
       failed,
     );
     expect(failed.args.task_id).toBeUndefined();
+
+    board.markReconciled('done-1');
 
     const completed = { args: { subagent_type: 'oracle', task_id: 'ora-1' } };
     await hook['tool.execute.before'](

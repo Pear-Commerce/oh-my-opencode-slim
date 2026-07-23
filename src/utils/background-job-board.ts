@@ -470,7 +470,15 @@ export function deriveTaskSessionLabel(input: {
 
 function isReusable(job: BackgroundJobRecord): boolean {
   const terminal = job.terminalState ?? terminalStateOf(job.state);
-  return terminal === 'completed' && !job.terminalUnreconciled;
+  // A completed session is reusable regardless of whether the result has
+  // been formally reconciled. terminalUnreconciled means "the orchestrator
+  // hasn't processed the result yet" — it doesn't mean the session can't
+  // be resumed. Without this, foreground tasks (e.g. oracle consultations)
+  // can't be resumed in the same turn because they're completed but not
+  // yet reconciled (reconciliation only happens when the orchestrator goes
+  // idle, which doesn't occur between a foreground task completing and the
+  // orchestrator trying to resume it).
+  return terminal === 'completed';
 }
 
 function terminalStateOf(
