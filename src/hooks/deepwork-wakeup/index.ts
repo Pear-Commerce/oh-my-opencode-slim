@@ -51,6 +51,7 @@ const DEFAULT_MAX_NO_PROGRESS = 15; // safety cap on consecutive "no" without pr
 const MESSAGE_READ_DELAY_MS = 500; // let OpenCode write the response before reading
 const DEFAULT_GATE_TIMEOUT_MS = 600_000; // 10 min for gate execution (LLM reviews can be slow)
 const GATE_FAIL_COOLDOWN_MS = 120_000; // 2 min cooldown after gate FAIL before re-firing
+const CONSULTATION_DONE_CHECK_COOLDOWN_MS = 600_000; // 10 min — suppress done-check while oracle is running from a consultation
 
 const GATE_DIR_NAME = '.slim/deepwork/gates';
 const CONSULTATION_DIR_NAME = '.slim/deepwork/consultations';
@@ -1437,7 +1438,16 @@ export function createDeepworkWakeupHook(
           !sentEventWake &&
           hasHadBackgroundWork.has(sessionId) &&
           !backgroundJobBoard.hasRunning(sessionId) &&
-          !backgroundJobBoard.hasTerminalUnreconciled(sessionId)
+          !backgroundJobBoard.hasTerminalUnreconciled(sessionId) &&
+          // Suppress the done-check while a consultation-triggered oracle
+          // call is in flight. The consultation prompt tells the orchestrator
+          // to call task(oracle) — the orchestrator goes idle while the
+          // foreground oracle subagent is running, but the background job
+          // board doesn't track foreground tasks, so hasRunning() is false.
+          // Without this cooldown, the done-check fires "are you done?"
+          // while the oracle is still reviewing.
+          (state.lastConsultationAt === 0 ||
+            Date.now() - state.lastConsultationAt >= CONSULTATION_DONE_CHECK_COOLDOWN_MS)
         ) {
           log('[deepwork-wakeup] firing one-shot done-check from idle handler (periodicDoneCheck disabled)', {
             sessionID: sessionId,
