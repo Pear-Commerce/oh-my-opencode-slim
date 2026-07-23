@@ -51,7 +51,6 @@ const DEFAULT_MAX_NO_PROGRESS = 15; // safety cap on consecutive "no" without pr
 const MESSAGE_READ_DELAY_MS = 500; // let OpenCode write the response before reading
 const DEFAULT_GATE_TIMEOUT_MS = 600_000; // 10 min for gate execution (LLM reviews can be slow)
 const GATE_FAIL_COOLDOWN_MS = 120_000; // 2 min cooldown after gate FAIL before re-firing
-const CONSULTATION_DONE_CHECK_COOLDOWN_MS = 600_000; // 10 min — suppress done-check while oracle is running from a consultation
 
 const GATE_DIR_NAME = '.slim/deepwork/gates';
 const CONSULTATION_DIR_NAME = '.slim/deepwork/consultations';
@@ -308,13 +307,22 @@ export interface DeepworkWakeupOptions {
    * provided or the orchestrator is unknown.
    */
   resolveOracleSpecialistName?: (orchestratorAgentName: string) => string;
+  /**
+   * Returns true if there are any pending (in-flight) task tool calls for
+   * the given parent session — either foreground or background. Used to
+   * suppress the done-check while a foreground oracle subagent (from a
+   * consultation or gate-check) is still running. The background job
+   * board only tracks background tasks, so without this the done-check
+   * fires "are you done?" while a foreground oracle is mid-review.
+   */
+  hasPendingTaskCall?: (parentSessionID: string) => boolean;
 }
 
 export function createDeepworkWakeupHook(
   client: PluginInput['client'],
   options: DeepworkWakeupOptions,
 ) {
-  const { backgroundJobBoard, shouldManageSession, directory, resolveModel, resolveOracleSpecialistName } =
+  const { backgroundJobBoard, shouldManageSession, directory, resolveModel, resolveOracleSpecialistName, hasPendingTaskCall } =
     options;
   const dedupWindowMs = options.dedupWindowMs ?? DEFAULT_DEDUP_WINDOW_MS;
   const wakeDelayMs = options.wakeDelayMs ?? DEFAULT_WAKE_DELAY_MS;
@@ -1439,15 +1447,12 @@ export function createDeepworkWakeupHook(
           hasHadBackgroundWork.has(sessionId) &&
           !backgroundJobBoard.hasRunning(sessionId) &&
           !backgroundJobBoard.hasTerminalUnreconciled(sessionId) &&
-          // Suppress the done-check while a consultation-triggered oracle
-          // call is in flight. The consultation prompt tells the orchestrator
-          // to call task(oracle) — the orchestrator goes idle while the
-          // foreground oracle subagent is running, but the background job
-          // board doesn't track foreground tasks, so hasRunning() is false.
-          // Without this cooldown, the done-check fires "are you done?"
-          // while the oracle is still reviewing.
-          (state.lastConsultationAt === 0 ||
-            Date.now() - state.lastConsultationAt >= CONSULTATION_DONE_CHECK_COOLDOWN_MS)
+          // Suppress the done-check while a foreground task call (e.g. a
+          // consultation-triggered oracle subagent) is in flight. The
+          // background job board only tracks background tasks, so without
+          // this the done-check fires "are you done?" while the oracle is
+          // still reviewing.
+          !(hasPendingTaskCall?.(sessionId) ?? false)
         ) {
           log('[deepwork-wakeup] firing one-shot done-check from idle handler (periodicDoneCheck disabled)', {
             sessionID: sessionId,

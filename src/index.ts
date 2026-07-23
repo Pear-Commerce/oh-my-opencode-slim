@@ -412,6 +412,13 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         if (agentDefs.some((a) => a.name === scopedName)) return scopedName;
         return 'oracle';
       },
+      // Expose the task-session-manager's pending-call tracker so the
+      // done-check is suppressed while a foreground oracle subagent
+      // (from a consultation or gate-check) is still running. The
+      // background job board only tracks background tasks; foreground
+      // task calls are tracked in the pendingCalls map.
+      hasPendingTaskCall: (parentSessionID: string) =>
+        taskSessionManagerHook.hasPendingTaskCall(parentSessionID),
     });
     // Resolve oracle model for fixer-review auto-review hook
     const oracleAgentDef = agentDefs.find((a) => a.name === 'oracle');

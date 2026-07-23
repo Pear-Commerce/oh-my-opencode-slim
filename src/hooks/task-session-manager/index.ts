@@ -848,6 +848,20 @@ export function createTaskSessionManagerHook(
         takePendingCall(callId);
       }
     },
+
+    /**
+     * Returns true if there are any pending (in-flight) task tool calls
+     * for the given parent session — either foreground or background.
+     * Used by the deepwork-wakeup hook to suppress the done-check while
+     * a foreground oracle subagent (from a consultation or gate-check)
+     * is still running.
+     */
+    hasPendingTaskCall(parentSessionID: string): boolean {
+      for (const pending of pendingCalls.values()) {
+        if (pending.parentSessionId === parentSessionID) return true;
+      }
+      return false;
+    },
   };
 
   function normalizeLateCancelledTaskOutput(output: {
