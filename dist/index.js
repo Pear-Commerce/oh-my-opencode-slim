@@ -30802,6 +30802,11 @@ var gh_grep = {
   url: "https://mcp.grep.app",
   oauth: false
 };
+var datadog = {
+  type: "remote",
+  url: "https://mcp.us5.datadoghq.com/api/unstable/mcp-server/mcp?toolsets=all",
+  oauth: true
+};
 
 // src/mcp/websearch.ts
 function createWebsearchConfig(config) {
@@ -30834,7 +30839,8 @@ var websearch = createWebsearchConfig();
 var allBuiltinMcps = {
   websearch,
   context7,
-  gh_grep
+  gh_grep,
+  datadog
 };
 function createBuiltinMcps(disabledMcps = [], websearchConfig) {
   const mcps = Object.fromEntries(Object.entries(allBuiltinMcps).filter(([name]) => !disabledMcps.includes(name)));
@@ -36475,11 +36481,6 @@ var OhMyOpenCodeLite = async (ctx) => {
     },
     mcp: mcps,
     config: async (opencodeConfig) => {
-      if (opencodeConfig.mcp) {
-        opencodeConfig.mcp = { ...mcps, ...opencodeConfig.mcp };
-      } else {
-        opencodeConfig.mcp = { ...mcps };
-      }
       if (config.setDefaultAgent !== false && !opencodeConfig.default_agent) {
         opencodeConfig.default_agent = "orchestrator";
       }
