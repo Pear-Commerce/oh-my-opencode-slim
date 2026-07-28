@@ -30804,8 +30804,7 @@ var gh_grep = {
 };
 var datadog = {
   type: "remote",
-  url: "https://mcp.us5.datadoghq.com/api/unstable/mcp-server/mcp?toolsets=all",
-  oauth: true
+  url: "https://mcp.us5.datadoghq.com/api/unstable/mcp-server/mcp?toolsets=all"
 };
 
 // src/mcp/websearch.ts
