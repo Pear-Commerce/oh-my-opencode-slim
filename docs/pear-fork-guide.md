@@ -242,12 +242,12 @@ Every preset uses the same specialist layout:
   `gh_grep`
 - **explorer** → `fireworks-ai/.../glm-5p2`
 - **designer** → `openrouter/anthropic/claude-sonnet-4.6` (variant `high`)
-- **fixer** → `fireworks-ai/.../glm-5p2`
+- **fixer** → `fireworks-ai/.../deepseek-v4-flash-0731`
 
-The pattern: **cheap/fast GLM 5.2 for scouting and mechanical work**, **Sonnet
-4.6 for design and council**, **Opus 4.8 for architecture/review**, and the
-**orchestrator model is the dial you turn** (GLM for cost, GPT-5.5 at
-medium/high/xhigh for harder coordination).
+The pattern: **cheap/fast GLM 5.2 for scouting, DeepSeek V4 Flash for mechanical
+work**, **Sonnet 4.6 for design and council**, **Opus 4.8 for
+architecture/review**, and the **orchestrator model is the dial you turn** (GLM
+for cost, GPT-5.5 at medium/high/xhigh for harder coordination).
 
 ### Variants
 
