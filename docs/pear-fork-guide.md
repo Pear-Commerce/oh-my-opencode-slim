@@ -242,7 +242,7 @@ Every preset uses the same specialist layout:
   `gh_grep`
 - **explorer** → `fireworks-ai/.../glm-5p2`
 - **designer** → `openrouter/anthropic/claude-sonnet-4.6` (variant `high`)
-- **fixer** → `fireworks-ai/.../deepseek-v4-flash-0731`
+- **fixer** → `fireworks-ai/.../deepseek-v4-flash`
 
 The pattern: **cheap/fast GLM 5.2 for scouting, DeepSeek V4 Flash for mechanical
 work**, **Sonnet 4.6 for design and council**, **Opus 4.8 for
