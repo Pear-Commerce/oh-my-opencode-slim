@@ -192,8 +192,8 @@ const GATE_FAIL_MESSAGE =
 
 const COMPACT_WRITE_MESSAGE = [
   'Your context window is approaching its limit. Before automatic compaction,',
-  'write everything you need to preserve to your deepwork progress file under',
-  '`.slim/deepwork/`. Include:',
+  'review your existing deepwork progress file under `.slim/deepwork/` and',
+  'UPDATE it (do not overwrite it) with everything you need to preserve:',
   '',
   '- current goal and understanding of the task;',
   '- plan drafts, oracle review notes, and key decisions;',
@@ -203,6 +203,10 @@ const COMPACT_WRITE_MESSAGE = [
   '- unresolved questions, blockers, and follow-ups;',
   '- background job board state (task IDs, agents, ownership);',
   '- any other context you will need to continue seamlessly after compaction.',
+  '',
+  'If the file already exists, read it first and append/update the relevant',
+  'sections. Do not blow it away — it has plenty of space and may contain',
+  'context from earlier phases that is still relevant.',
   '',
   'Write it NOW. Compaction will be triggered automatically once you finish.',
   'Do not skip this step — after compaction your context will be summarized',
@@ -1748,21 +1752,6 @@ export function createDeepworkWakeupHook(
     }): Promise<void> => {
       const event = input.event;
 
-      // Debug: log every event for managed sessions to trace the flow
-      {
-        const dbgSessionId =
-          event.properties?.info?.id ??
-          event.properties?.info?.sessionID ??
-          event.properties?.sessionID;
-        if (dbgSessionId && shouldManageSession(dbgSessionId)) {
-          log('[deepwork-wakeup] event received', {
-            type: event.type,
-            sessionId: dbgSessionId,
-            managesSession: true,
-          });
-        }
-      }
-
       // ── Context-compact: handle message.updated for token tracking ──
       // This must be handled BEFORE the generic session ID extraction
       // because for message.updated events, info.id is the MESSAGE ID
@@ -1927,13 +1916,15 @@ export function createDeepworkWakeupHook(
         // ── Context-compact: check token threshold on idle ────────────
         // message.updated events don't reliably carry token data to plugins,
         // so the primary trigger is checking the last assistant message's
-        // token count when the orchestrator goes idle. This runs for ALL
-        // managed orchestrator sessions (not just deepwork sessions with
-        // background work) because context size is independent of
-        // background work history. After a restart, hasHadBackgroundWork
-        // is empty, but a session at 800k tokens still needs compaction.
+        // token count when the orchestrator goes idle. Only check for
+        // deepwork sessions (has had background work or has a gate) to
+        // avoid an expensive messages() API call on every idle event for
+        // every managed session. The check is async and would delay the
+        // normal wakeup flow (done-check, gate, consultation) by several
+        // seconds if run on every idle.
         if (
           state.compactCycle === 'normal' &&
+          (hasHadBackgroundWork.has(sessionId) || state.gate) &&
           !backgroundJobBoard.hasRunning(sessionId) &&
           !backgroundJobBoard.hasTerminalUnreconciled(sessionId) &&
           !state.awaitingDoneCheck &&
@@ -1997,18 +1988,15 @@ export function createDeepworkWakeupHook(
           // Fall through to normal idle handling — the orchestrator may
           // have more work to do after refreshing its context.
         }
-        // If compactCycle is 'compacting', the tui.executeCommand was
-        // sent but compaction may not have fired (TUI command doesn't
-        // work for programmatic compaction). Reset to normal but keep
-        // deepworkFileWritten=true so when auto-compact fires naturally
-        // (context overflow during next agent loop), the session.compacted
-        // handler sends the refresh prompt.
+        // If compactCycle is 'compacting', triggerCompaction fired
+        // session.summarize() as fire-and-forget. The summarize call
+        // is running in the background. Reset compactCycle to normal
+        // but keep deepworkFileWritten=true so when session.compacted
+        // fires, the refresh prompt is sent. Fall through to normal
+        // idle handling.
         if (state.compactCycle === 'compacting') {
           state.compactCycle = 'normal';
           state.lastCompactAt = Date.now();
-          // deepworkFileWritten stays true — session.compacted handler
-          // will send the refresh prompt when auto-compact fires.
-          // Fall through to normal idle handling.
         }
 
         // If this is the first time we've seen this session (after a

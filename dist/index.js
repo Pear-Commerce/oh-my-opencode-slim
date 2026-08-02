@@ -24449,8 +24449,8 @@ var CONTINUE_MESSAGE = "Continue your deepwork. Pick up where you left off and p
 var GATE_FAIL_MESSAGE = "The convergence gate failed. Review the gate output above, fix the issues, and continue.";
 var COMPACT_WRITE_MESSAGE = [
   "Your context window is approaching its limit. Before automatic compaction,",
-  "write everything you need to preserve to your deepwork progress file under",
-  "`.slim/deepwork/`. Include:",
+  "review your existing deepwork progress file under `.slim/deepwork/` and",
+  "UPDATE it (do not overwrite it) with everything you need to preserve:",
   "",
   "- current goal and understanding of the task;",
   "- plan drafts, oracle review notes, and key decisions;",
@@ -24460,6 +24460,10 @@ var COMPACT_WRITE_MESSAGE = [
   "- unresolved questions, blockers, and follow-ups;",
   "- background job board state (task IDs, agents, ownership);",
   "- any other context you will need to continue seamlessly after compaction.",
+  "",
+  "If the file already exists, read it first and append/update the relevant",
+  "sections. Do not blow it away — it has plenty of space and may contain",
+  "context from earlier phases that is still relevant.",
   "",
   "Write it NOW. Compaction will be triggered automatically once you finish.",
   "Do not skip this step — after compaction your context will be summarized",
@@ -25265,16 +25269,6 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
   return {
     event: async (input) => {
       const event = input.event;
-      {
-        const dbgSessionId = event.properties?.info?.id ?? event.properties?.info?.sessionID ?? event.properties?.sessionID;
-        if (dbgSessionId && shouldManageSession(dbgSessionId)) {
-          log("[deepwork-wakeup] event received", {
-            type: event.type,
-            sessionId: dbgSessionId,
-            managesSession: true
-          });
-        }
-      }
       if (event.type === "message.updated") {
         const info = event.properties?.info;
         if (!info)
@@ -25377,7 +25371,7 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
       if (shouldManageSession(sessionId)) {
         const state = getState(sessionId);
         state.idle = true;
-        if (state.compactCycle === "normal" && !backgroundJobBoard.hasRunning(sessionId) && !backgroundJobBoard.hasTerminalUnreconciled(sessionId) && !state.awaitingDoneCheck && !state.wakeInFlight) {
+        if (state.compactCycle === "normal" && (hasHadBackgroundWork.has(sessionId) || state.gate) && !backgroundJobBoard.hasRunning(sessionId) && !backgroundJobBoard.hasTerminalUnreconciled(sessionId) && !state.awaitingDoneCheck && !state.wakeInFlight) {
           await checkContextThresholdOnIdle(sessionId);
         }
         if (state.compactCycle === "pendingWrite") {
