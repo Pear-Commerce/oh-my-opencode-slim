@@ -1,6 +1,10 @@
-import { type PluginInput, type ToolDefinition, tool } from '@opencode-ai/plugin';
-import { log } from '../utils/logger';
+import {
+  type PluginInput,
+  type ToolDefinition,
+  tool,
+} from '@opencode-ai/plugin';
 import type { LoopGate } from '../hooks/deepwork-wakeup';
+import { log } from '../utils/logger';
 
 const z = tool.schema;
 
@@ -48,23 +52,33 @@ Only callable by orchestrator-class agents in managed sessions.`,
       command: z
         .string()
         .optional()
-        .describe('Shell command to run (required when type="command"). Exit 0 = pass.'),
+        .describe(
+          'Shell command to run (required when type="command"). Exit 0 = pass.',
+        ),
       prompt: z
         .string()
         .optional()
-        .describe('Adjudicator prompt (required when type="adjudicator"). The LLM receives this and must respond PASS or FAIL.'),
+        .describe(
+          'Adjudicator prompt (required when type="adjudicator"). The LLM receives this and must respond PASS or FAIL.',
+        ),
       model: z
         .string()
         .optional()
-        .describe('Ignored for adjudicator gates (the Oracle runs on its configured model). Kept for backward compatibility.'),
+        .describe(
+          'Ignored for adjudicator gates (the Oracle runs on its configured model). Kept for backward compatibility.',
+        ),
       files: z
         .array(z.string())
         .optional()
-        .describe('File paths to attach to the adjudicator prompt. Relative paths resolve against the project directory. The adjudicator reads these as native file attachments — use this instead of pasting large content into the prompt.'),
+        .describe(
+          'File paths to attach to the adjudicator prompt. Relative paths resolve against the project directory. The adjudicator reads these as native file attachments — use this instead of pasting large content into the prompt.',
+        ),
       timeoutMs: z
         .number()
         .optional()
-        .describe('Gate execution timeout in ms. Default 600000 (10 min). For adjudicator reviews of large documents, set higher (e.g. 1200000 = 20 min). The adjudicator session is aborted if it exceeds this.'),
+        .describe(
+          'Gate execution timeout in ms. Default 600000 (10 min). For adjudicator reviews of large documents, set higher (e.g. 1200000 = 20 min). The adjudicator session is aborted if it exceeds this.',
+        ),
     },
     async execute(args, toolContext) {
       const sessionID = toolContext?.sessionID;
@@ -113,7 +127,10 @@ Only callable by orchestrator-class agents in managed sessions.`,
           ...(args.timeoutMs ? { timeoutMs: args.timeoutMs } : {}),
         };
         options.setGate(sessionID, gate);
-        log('[set_loop_gate] command gate set', { sessionID, command: args.command });
+        log('[set_loop_gate] command gate set', {
+          sessionID,
+          command: args.command,
+        });
         return `Loop gate set to command: \`${args.command}\`\nThe loop will continue until this command exits 0.`;
       }
 

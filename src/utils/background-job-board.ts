@@ -102,8 +102,7 @@ export class BackgroundJobBoard {
       // stale parent owns the job, formatForPrompt(newParent) sees nothing,
       // the reconciliation reminder is never injected, and the deepwork
       // loop stalls with terminal jobs that never reconcile.
-      const parentChanged =
-        input.parentSessionID !== existing.parentSessionID;
+      const parentChanged = input.parentSessionID !== existing.parentSessionID;
       const agent = input.agent || existing.agent;
       const updated = {
         ...existing,

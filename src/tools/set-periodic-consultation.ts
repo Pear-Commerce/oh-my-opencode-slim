@@ -1,6 +1,6 @@
 import { type ToolDefinition, tool } from '@opencode-ai/plugin';
-import { log } from '../utils/logger';
 import type { PeriodicConsultation } from '../hooks/deepwork-wakeup';
+import { log } from '../utils/logger';
 
 const z = tool.schema;
 
@@ -43,42 +43,59 @@ Only callable by orchestrator-class agents in managed sessions.`,
       prompt: z
         .string()
         .optional()
-        .describe('The prompt to send to the Oracle every interval. Required to set a consultation.'),
+        .describe(
+          'The prompt to send to the Oracle every interval. Required to set a consultation.',
+        ),
       intervalMinutes: z
         .number()
         .min(1)
         .optional()
-        .describe('Fire every N minutes. Required to set. Pass 0 or omit to clear.'),
+        .describe(
+          'Fire every N minutes. Required to set. Pass 0 or omit to clear.',
+        ),
       files: z
         .array(z.string())
         .optional()
-        .describe('File paths for the Oracle to read as part of its review (passed as paths in the prompt).'),
+        .describe(
+          'File paths for the Oracle to read as part of its review (passed as paths in the prompt).',
+        ),
       clear: z
         .boolean()
         .optional()
-        .describe('Pass true to clear the consultation (alternative to omitting intervalMinutes).'),
+        .describe(
+          'Pass true to clear the consultation (alternative to omitting intervalMinutes).',
+        ),
     },
     async execute(args, toolContext) {
       const sessionID = toolContext?.sessionID;
-      if (!sessionID) throw new Error('set_periodic_consultation requires sessionID');
+      if (!sessionID)
+        throw new Error('set_periodic_consultation requires sessionID');
 
       if (
         toolContext.agent &&
         toolContext.agent !== 'orchestrator' &&
         !toolContext.agent.startsWith('orchestrator-')
       ) {
-        throw new Error('set_periodic_consultation can only be used by orchestrator');
+        throw new Error(
+          'set_periodic_consultation can only be used by orchestrator',
+        );
       }
 
       // Clear request
-      if (args.clear === true || !args.intervalMinutes || args.intervalMinutes < 1) {
+      if (
+        args.clear === true ||
+        !args.intervalMinutes ||
+        args.intervalMinutes < 1
+      ) {
         options.setConsultation(sessionID, undefined);
         log('[set_periodic_consultation] consultation cleared', { sessionID });
         return 'Periodic consultation cleared.';
       }
 
       if (!args.prompt) {
-        throw new Error('set_periodic_consultation requires a "prompt" argument');
+        throw new Error(
+          'set_periodic_consultation requires a "prompt" argument',
+        );
       }
 
       // shouldManageSession check (with async fallback for post-restart)

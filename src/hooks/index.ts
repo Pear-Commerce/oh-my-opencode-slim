@@ -6,8 +6,8 @@ export { createCouncilDetailsHook } from './council-details';
 export { createDeepworkCommandHook } from './deepwork';
 export { createDeepworkWakeupHook } from './deepwork-wakeup';
 export { createDelegateTaskRetryHook } from './delegate-task-retry/hook';
-export { createFixerReviewHook } from './fixer-review';
 export { createFilterAvailableSkillsHook } from './filter-available-skills';
+export { createFixerReviewHook } from './fixer-review';
 export {
   ForegroundFallbackManager,
   isRateLimitError,

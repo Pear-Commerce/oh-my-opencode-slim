@@ -503,10 +503,13 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           const agentName = firstWithAgent?.info?.agent;
           if (agentName) {
             sessionAgentMap.set(sessionID, agentName);
-            log('[plugin] resolved agent from messages for set_periodic_consultation', {
-              sessionID,
-              agentName,
-            });
+            log(
+              '[plugin] resolved agent from messages for set_periodic_consultation',
+              {
+                sessionID,
+                agentName,
+              },
+            );
             return isOrchestratorClassAgent(config, agentName);
           }
         } catch (err) {
@@ -1191,6 +1194,16 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       // them back into one element so OpenCode emits a single system
       // message.
       collapseSystemInPlace(output.system);
+    },
+
+    // Inject deepwork context into the compaction prompt so the summary
+    // preserves deepwork file references and key context the orchestrator
+    // will need after compaction.
+    'experimental.session.compacting': async (
+      input: { sessionID: string },
+      output: { context: string[]; prompt?: string },
+    ): Promise<void> => {
+      await deepworkWakeupHook.compacting(input, output);
     },
 
     // Inject phase reminder and filter available skills before sending to

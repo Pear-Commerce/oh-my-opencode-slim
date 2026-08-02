@@ -37,12 +37,18 @@
  * affected. A dedup window prevents rapid re-waking.
  */
 
-import type { PluginInput } from '@opencode-ai/plugin';
 import { execSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
-import { log } from '../../utils/logger';
+import type { PluginInput } from '@opencode-ai/plugin';
 import type { BackgroundJobBoard } from '../../utils/background-job-board';
+import { log } from '../../utils/logger';
 
 const DEFAULT_DEDUP_WINDOW_MS = 3_000;
 const DEFAULT_WAKE_DELAY_MS = 800;
@@ -52,6 +58,10 @@ const MESSAGE_READ_DELAY_MS = 500; // let OpenCode write the response before rea
 const DEFAULT_GATE_TIMEOUT_MS = 600_000; // 10 min for gate execution (LLM reviews can be slow)
 const GATE_FAIL_COOLDOWN_MS = 120_000; // 2 min cooldown after gate FAIL before re-firing
 
+// ── Context-compact defaults ─────────────────────────────────────────
+const DEFAULT_CONTEXT_THRESHOLD = 400_000; // 400k input tokens
+const DEFAULT_COMPACT_COOLDOWN_MS = 60_000; // 1 min between compact cycles
+
 const GATE_DIR_NAME = '.slim/deepwork/gates';
 const CONSULTATION_DIR_NAME = '.slim/deepwork/consultations';
 
@@ -59,7 +69,11 @@ const CONSULTATION_DIR_NAME = '.slim/deepwork/consultations';
  * Persist a gate to disk so it survives process restarts.
  * Written to <directory>/.slim/deepwork/gates/<sessionID>.json
  */
-function persistGate(directory: string | undefined, sessionID: string, gate: LoopGate | undefined): void {
+function persistGate(
+  directory: string | undefined,
+  sessionID: string,
+  gate: LoopGate | undefined,
+): void {
   if (!directory) return;
   try {
     const gateDir = join(directory, GATE_DIR_NAME);
@@ -82,7 +96,10 @@ function persistGate(directory: string | undefined, sessionID: string, gate: Loo
  * Load a persisted gate from disk. Called when a managed session is first
  * seen after a process restart, to restore gate state.
  */
-function loadPersistedGate(directory: string | undefined, sessionID: string): LoopGate | undefined {
+function loadPersistedGate(
+  directory: string | undefined,
+  sessionID: string,
+): LoopGate | undefined {
   if (!directory) return undefined;
   try {
     const gateFile = join(directory, GATE_DIR_NAME, `${sessionID}.json`);
@@ -107,7 +124,11 @@ function loadPersistedGate(directory: string | undefined, sessionID: string): Lo
  * Persist a periodic consultation to disk so it survives process restarts.
  * Written to <directory>/.slim/deepwork/consultations/<sessionID>.json
  */
-function persistConsultation(directory: string | undefined, sessionID: string, consultation: PeriodicConsultation | undefined): void {
+function persistConsultation(
+  directory: string | undefined,
+  sessionID: string,
+  consultation: PeriodicConsultation | undefined,
+): void {
   if (!directory) return;
   try {
     const dir = join(directory, CONSULTATION_DIR_NAME);
@@ -130,7 +151,10 @@ function persistConsultation(directory: string | undefined, sessionID: string, c
  * Load a persisted consultation from disk. Called when a managed session is
  * first seen after a process restart, to restore consultation state.
  */
-function loadPersistedConsultation(directory: string | undefined, sessionID: string): PeriodicConsultation | undefined {
+function loadPersistedConsultation(
+  directory: string | undefined,
+  sessionID: string,
+): PeriodicConsultation | undefined {
   if (!directory) return undefined;
   try {
     const file = join(directory, CONSULTATION_DIR_NAME, `${sessionID}.json`);
@@ -162,6 +186,37 @@ const CONTINUE_MESSAGE =
 
 const GATE_FAIL_MESSAGE =
   'The convergence gate failed. Review the gate output above, fix the issues, and continue.';
+
+// ── Context-compact messages ─────────────────────────────────────────
+
+const COMPACT_WRITE_MESSAGE = [
+  'Your context window is approaching its limit. Before automatic compaction,',
+  'write everything you need to preserve to your deepwork progress file under',
+  '`.slim/deepwork/`. Include:',
+  '',
+  '- current goal and understanding of the task;',
+  '- plan drafts, oracle review notes, and key decisions;',
+  '- active implementation phases and their status;',
+  '- file references (paths only, not contents) for all relevant files;',
+  '- research findings from @librarian or other specialists;',
+  '- unresolved questions, blockers, and follow-ups;',
+  '- background job board state (task IDs, agents, ownership);',
+  '- any other context you will need to continue seamlessly after compaction.',
+  '',
+  'Write it NOW. Compaction will be triggered automatically once you finish.',
+  'Do not skip this step — after compaction your context will be summarized',
+  'and you will need the deepwork file to restore your full working state.',
+].join('\n');
+
+const COMPACT_REFRESH_MESSAGE = [
+  'Compaction has completed. Your context has been summarized.',
+  '',
+  'Read your deepwork progress file under `.slim/deepwork/` to restore your',
+  'full working context. After reading it, pick up exactly where you left off',
+  'and continue your work. Do not restart from scratch — the deepwork file',
+  'contains your plan, phase status, file references, and all context you need',
+  'to continue.',
+].join('\n');
 
 /**
  * Loop gate — replaces the model yes/no done-check with a machine-checkable
@@ -211,6 +266,28 @@ export type PeriodicConsultation = {
   files?: string[];
 };
 
+/**
+ * Context-compact cycle state.
+ *
+ * When the orchestrator's input token count exceeds `contextThreshold`,
+ * the hook automatically:
+ *
+ * 1. `awaitingWrite` — prompts the orchestrator to write everything it
+ *    needs to its deepwork progress file;
+ * 2. `compacting` — triggers `/compact` via session.command once the
+ *    orchestrator goes idle after writing;
+ * 3. `awaitingRefresh` — after `session.compacted` fires, prompts the
+ *    orchestrator to re-read its deepwork file and continue.
+ *
+ * The cycle then returns to `normal`.
+ */
+export type CompactCycleState =
+  | 'normal'
+  | 'pendingWrite'
+  | 'awaitingWrite'
+  | 'compacting'
+  | 'awaitingRefresh';
+
 interface SessionWakeState {
   idle: boolean;
   lastWakeAt: number;
@@ -251,6 +328,22 @@ interface SessionWakeState {
    * startConsultationTimer.
    */
   consultationQueuedAt: number;
+  // ── Context-compact state ────────────────────────────────────────
+  /**
+   * Current state in the auto-compact cycle. See CompactCycleState.
+   */
+  compactCycle: CompactCycleState;
+  /**
+   * Timestamp of the last completed compact cycle. Used for cooldown
+   * to prevent re-triggering immediately after compaction.
+   */
+  lastCompactAt: number;
+  /**
+   * Last seen input token count from message.updated events. Used to
+   * avoid re-triggering the compact cycle if the token count hasn't
+   * changed.
+   */
+  lastInputTokens: number;
 }
 
 export interface DeepworkWakeupOptions {
@@ -295,7 +388,9 @@ export interface DeepworkWakeupOptions {
   ) =>
     | { providerID: string; modelID: string; agent?: string }
     | undefined
-    | Promise<{ providerID: string; modelID: string; agent?: string } | undefined>;
+    | Promise<
+        { providerID: string; modelID: string; agent?: string } | undefined
+      >;
   /**
    * Resolve the oracle specialist agent name for a given orchestrator agent
    * name. Custom orchestrators with a `specialists` override get a scoped
@@ -316,20 +411,43 @@ export interface DeepworkWakeupOptions {
    * fires "are you done?" while a foreground oracle is mid-review.
    */
   hasPendingTaskCall?: (parentSessionID: string) => boolean;
+  /**
+   * Input-token threshold that triggers the auto-compact cycle. When the
+   * orchestrator's input tokens exceed this value, the hook prompts it to
+   * write to its deepwork file, then triggers compaction, then prompts it
+   * to re-read the file. Defaults to 400_000 (400k tokens).
+   */
+  contextThreshold?: number;
+  /**
+   * Cooldown in ms between auto-compact cycles. Prevents re-triggering
+   * immediately after a cycle completes. Defaults to 60_000 (1 min).
+   */
+  compactCooldownMs?: number;
 }
 
 export function createDeepworkWakeupHook(
   client: PluginInput['client'],
   options: DeepworkWakeupOptions,
 ) {
-  const { backgroundJobBoard, shouldManageSession, directory, resolveModel, resolveOracleSpecialistName, hasPendingTaskCall } =
-    options;
+  const {
+    backgroundJobBoard,
+    shouldManageSession,
+    directory,
+    resolveModel,
+    resolveOracleSpecialistName,
+    hasPendingTaskCall,
+  } = options;
   const dedupWindowMs = options.dedupWindowMs ?? DEFAULT_DEDUP_WINDOW_MS;
   const wakeDelayMs = options.wakeDelayMs ?? DEFAULT_WAKE_DELAY_MS;
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
   const maxNoProgress = options.maxNoProgress ?? DEFAULT_MAX_NO_PROGRESS;
-  const messageReadDelayMs = options.messageReadDelayMs ?? MESSAGE_READ_DELAY_MS;
+  const messageReadDelayMs =
+    options.messageReadDelayMs ?? MESSAGE_READ_DELAY_MS;
   const periodicDoneCheck = options.periodicDoneCheck ?? true;
+  const contextThreshold =
+    options.contextThreshold ?? DEFAULT_CONTEXT_THRESHOLD;
+  const compactCooldownMs =
+    options.compactCooldownMs ?? DEFAULT_COMPACT_COOLDOWN_MS;
 
   const states = new Map<string, SessionWakeState>();
   const hasHadBackgroundWork = new Set<string>();
@@ -353,6 +471,9 @@ export function createDeepworkWakeupHook(
         lastConsultationAt: 0,
         consultationPending: false,
         consultationQueuedAt: 0,
+        compactCycle: 'normal',
+        lastCompactAt: 0,
+        lastInputTokens: 0,
       };
       states.set(sessionID, s);
     }
@@ -486,10 +607,13 @@ export function createDeepworkWakeupHook(
       // during the delay (user message, background completion, etc.). Sending
       // a prompt to a busy session interrupts active work.
       if (!state.idle) {
-        log('[deepwork-wakeup] orchestrator became busy during wake delay, aborting', {
-          sessionID,
-          reason,
-        });
+        log(
+          '[deepwork-wakeup] orchestrator became busy during wake delay, aborting',
+          {
+            sessionID,
+            reason,
+          },
+        );
         return false;
       }
 
@@ -524,7 +648,9 @@ export function createDeepworkWakeupHook(
           path: { id: sessionID },
           body: {
             parts: [{ type: 'text', text: message }],
-            ...(model ? { model, ...(model.agent ? { agent: model.agent } : {}) } : {}),
+            ...(model
+              ? { model, ...(model.agent ? { agent: model.agent } : {}) }
+              : {}),
           },
         }),
         new Promise<never>((_, reject) =>
@@ -575,6 +701,64 @@ export function createDeepworkWakeupHook(
   }
 
   /**
+   * Trigger session compaction via the OpenCode session.command API.
+   *
+   * Fires `session.compact` as a TUI command. This is fire-and-forget —
+   * compaction is an LLM call that takes 30+ seconds. The
+   * `session.compacted` event will fire when it's done, and the event
+   * handler sends the refresh prompt at that point.
+   */
+  function triggerCompaction(sessionID: string): void {
+    try {
+      const sessionClient = client.session as unknown as {
+        command?: (args: {
+          path: { id: string };
+          body: { command: string; arguments: string };
+        }) => Promise<unknown>;
+      };
+      if (typeof sessionClient.command !== 'function') {
+        log(
+          '[deepwork-wakeup] session.command unavailable, cannot trigger compaction',
+          {
+            sessionID,
+          },
+        );
+        // Reset the cycle so the orchestrator isn't stuck in 'compacting'
+        const state = getState(sessionID);
+        state.compactCycle = 'normal';
+        state.lastCompactAt = Date.now();
+        return;
+      }
+      // Fire-and-forget — don't await. The session.compacted event
+      // handler picks up from here.
+      sessionClient
+        .command({
+          path: { id: sessionID },
+          body: { command: 'session.compact', arguments: '' },
+        })
+        .catch((err) => {
+          log('[deepwork-wakeup] compaction trigger failed', {
+            sessionID,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          // Reset on failure so the cycle can retry later
+          const state = getState(sessionID);
+          state.compactCycle = 'normal';
+          state.lastCompactAt = Date.now();
+        });
+      log('[deepwork-wakeup] compaction triggered', { sessionID });
+    } catch (err) {
+      log('[deepwork-wakeup] failed to trigger compaction', {
+        sessionID,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      const state = getState(sessionID);
+      state.compactCycle = 'normal';
+      state.lastCompactAt = Date.now();
+    }
+  }
+
+  /**
    * Run a convergence gate.
    *
    * - `command`: run synchronously, act on pass/fail immediately.
@@ -614,9 +798,12 @@ export function createDeepworkWakeupHook(
 
       // Override pass if there is unreconciled background work
       if (passed && backgroundJobBoard.hasTerminalUnreconciled(sessionID)) {
-        log('[deepwork-wakeup] gate passed but unreconciled work remains, continuing', {
-          sessionID,
-        });
+        log(
+          '[deepwork-wakeup] gate passed but unreconciled work remains, continuing',
+          {
+            sessionID,
+          },
+        );
         passed = false;
         output = 'Gate passed, but unreconciled background work remains.';
       }
@@ -668,10 +855,10 @@ export function createDeepworkWakeupHook(
   /**
    * Run a command gate. Exit 0 = pass, non-zero = fail.
    */
-  function runCommandGate(gate: {
-    command: string;
-    timeoutMs?: number;
-  }): { passed: boolean; output: string } {
+  function runCommandGate(gate: { command: string; timeoutMs?: number }): {
+    passed: boolean;
+    output: string;
+  } {
     const timeoutMs = gate.timeoutMs ?? DEFAULT_GATE_TIMEOUT_MS;
     try {
       const output = execSync(gate.command, {
@@ -731,10 +918,13 @@ export function createDeepworkWakeupHook(
         if (resolved) oracleName = resolved;
       }
     } catch (err) {
-      log('[deepwork-wakeup] failed to resolve oracle specialist name, using generic', {
-        sessionID,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      log(
+        '[deepwork-wakeup] failed to resolve oracle specialist name, using generic',
+        {
+          sessionID,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
     }
 
     const fileNote =
@@ -745,7 +935,9 @@ export function createDeepworkWakeupHook(
     const message = [
       'A convergence gate is already set and running — you are NOT being asked to set, configure, or clear any gate. Do not call set_loop_gate. You are being asked to RUN one gate check: delegate to your Oracle specialist and report its verdict.',
       '',
-      'Step 1: Call the task tool with subagent_type "' + oracleName + '" (foreground, not background) and this prompt:',
+      'Step 1: Call the task tool with subagent_type "' +
+        oracleName +
+        '" (foreground, not background) and this prompt:',
       '```',
       gate.prompt,
       '```' + fileNote,
@@ -794,10 +986,13 @@ export function createDeepworkWakeupHook(
         if (resolved) oracleName = resolved;
       }
     } catch (err) {
-      log('[deepwork-wakeup] failed to resolve oracle specialist name for consultation, using generic', {
-        sessionID,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      log(
+        '[deepwork-wakeup] failed to resolve oracle specialist name for consultation, using generic',
+        {
+          sessionID,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
     }
 
     const fileNote =
@@ -808,12 +1003,14 @@ export function createDeepworkWakeupHook(
     const message = [
       'Periodic consultation check-in. Delegate to your Oracle specialist for a progress review.',
       '',
-      'Step 1: Call the task tool with subagent_type "' + oracleName + '" (foreground, not background) and this prompt:',
+      'Step 1: Call the task tool with subagent_type "' +
+        oracleName +
+        '" (foreground, not background) and this prompt:',
       '```',
       consultation.prompt,
       '```' + fileNote,
       '',
-      'Step 2: After the Oracle responds, review its advice and continue your deepwork accordingly. Incorporate any big changes the Oracle recommends. Do NOT repeat the Oracle\'s full response — it\'s visible in the Oracle subagent. Just briefly note any adjustments you\'re making to the plan, then continue.',
+      "Step 2: After the Oracle responds, review its advice and continue your deepwork accordingly. Incorporate any big changes the Oracle recommends. Do NOT repeat the Oracle's full response — it's visible in the Oracle subagent. Just briefly note any adjustments you're making to the plan, then continue.",
     ].join('\n');
 
     const sent = await sendPrompt(sessionID, message, 'consultation');
@@ -848,10 +1045,13 @@ export function createDeepworkWakeupHook(
         if (resolved) oracleName = resolved;
       }
     } catch (err) {
-      log('[deepwork-wakeup] failed to resolve oracle specialist name for force-consultation, using generic', {
-        sessionID,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      log(
+        '[deepwork-wakeup] failed to resolve oracle specialist name for force-consultation, using generic',
+        {
+          sessionID,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
     }
 
     const fileNote =
@@ -860,14 +1060,16 @@ export function createDeepworkWakeupHook(
         : '';
 
     const message = [
-      'Periodic consultation check-in (FORCED — you have been working for a long time without a check-in). Pause your current work, delegate to your Oracle specialist for a progress review, then continue with the Oracle\'s advice.',
+      "Periodic consultation check-in (FORCED — you have been working for a long time without a check-in). Pause your current work, delegate to your Oracle specialist for a progress review, then continue with the Oracle's advice.",
       '',
-      'Step 1: Call the task tool with subagent_type "' + oracleName + '" (foreground, not background) and this prompt:',
+      'Step 1: Call the task tool with subagent_type "' +
+        oracleName +
+        '" (foreground, not background) and this prompt:',
       '```',
       consultation.prompt,
       '```' + fileNote,
       '',
-      'Step 2: After the Oracle responds, review its advice and continue your deepwork accordingly. Incorporate any big changes the Oracle recommends. Do NOT repeat the Oracle\'s full response — it\'s visible in the Oracle subagent. Just briefly note any adjustments you\'re making to the plan, then continue.',
+      "Step 2: After the Oracle responds, review its advice and continue your deepwork accordingly. Incorporate any big changes the Oracle recommends. Do NOT repeat the Oracle's full response — it's visible in the Oracle subagent. Just briefly note any adjustments you're making to the plan, then continue.",
     ].join('\n');
 
     // Send directly via promptAsync — bypasses sendPrompt's idle/wake
@@ -885,7 +1087,9 @@ export function createDeepworkWakeupHook(
     };
 
     if (typeof sessionClient.promptAsync !== 'function') {
-      log('[deepwork-wakeup] promptAsync unavailable for force-consultation', { sessionID });
+      log('[deepwork-wakeup] promptAsync unavailable for force-consultation', {
+        sessionID,
+      });
       return;
     }
 
@@ -894,7 +1098,9 @@ export function createDeepworkWakeupHook(
       path: { id: sessionID },
       body: {
         parts: [{ type: 'text', text: message }],
-        ...(model ? { model, ...(model.agent ? { agent: model.agent } : {}) } : {}),
+        ...(model
+          ? { model, ...(model.agent ? { agent: model.agent } : {}) }
+          : {}),
       },
     });
 
@@ -911,7 +1117,10 @@ export function createDeepworkWakeupHook(
    * is busy when the timer fires, the consultation is queued
    * (consultationPending=true) and fires when the orchestrator goes idle.
    */
-  function startConsultationTimer(sessionID: string, consultation: PeriodicConsultation): void {
+  function startConsultationTimer(
+    sessionID: string,
+    consultation: PeriodicConsultation,
+  ): void {
     // Clear any existing consultation timer for this session.
     const existing = consultationTimers.get(sessionID);
     if (existing) clearInterval(existing);
@@ -936,11 +1145,14 @@ export function createDeepworkWakeupHook(
         }
         const pendingMs = Date.now() - state.consultationQueuedAt;
         if (state.consultationPending && pendingMs >= 2 * intervalMs) {
-          log('[deepwork-wakeup] consultation force-fire threshold reached, sending directly', {
-            sessionID,
-            pendingMs,
-            thresholdMs: 2 * intervalMs,
-          });
+          log(
+            '[deepwork-wakeup] consultation force-fire threshold reached, sending directly',
+            {
+              sessionID,
+              pendingMs,
+              thresholdMs: 2 * intervalMs,
+            },
+          );
           state.consultationPending = false;
           state.lastConsultationAt = Date.now();
           forceSendConsultation(sessionID, consultation).catch((err) => {
@@ -951,10 +1163,13 @@ export function createDeepworkWakeupHook(
           });
           return;
         }
-        log('[deepwork-wakeup] consultation timer fired but orchestrator busy, queuing', {
-          sessionID,
-          pendingMs: state.consultationPending ? pendingMs : 0,
-        });
+        log(
+          '[deepwork-wakeup] consultation timer fired but orchestrator busy, queuing',
+          {
+            sessionID,
+            pendingMs: state.consultationPending ? pendingMs : 0,
+          },
+        );
         state.consultationPending = true;
         return;
       }
@@ -1081,9 +1296,12 @@ export function createDeepworkWakeupHook(
 
     // Ambiguous (neither matched, or both matched) — default to fail.
     if (!passed && !failed) {
-      log('[deepwork-wakeup] gate-check response ambiguous, defaulting to fail', {
-        responsePreview: text.slice(0, 100),
-      });
+      log(
+        '[deepwork-wakeup] gate-check response ambiguous, defaulting to fail',
+        {
+          responsePreview: text.slice(0, 100),
+        },
+      );
       state.awaitingDoneCheck = false;
       state.gateCheckPromptSent = false;
       state.lastGateFailAt = Date.now();
@@ -1100,9 +1318,12 @@ export function createDeepworkWakeupHook(
 
     // Override pass if there is unreconciled background work
     if (verdictPass && backgroundJobBoard.hasTerminalUnreconciled(sessionID)) {
-      log('[deepwork-wakeup] gate passed but unreconciled work remains, continuing', {
-        sessionID,
-      });
+      log(
+        '[deepwork-wakeup] gate passed but unreconciled work remains, continuing',
+        {
+          sessionID,
+        },
+      );
       state.awaitingDoneCheck = false;
       state.gateCheckPromptSent = false;
       state.lastGateFailAt = Date.now();
@@ -1151,7 +1372,7 @@ export function createDeepworkWakeupHook(
    * Read the last assistant message from a session and parse yes/no.
    * Returns 'yes', 'no', or null (ambiguous/unreadable).
    */
-   async function readDoneCheckResponse(
+  async function readDoneCheckResponse(
     sessionID: string,
   ): Promise<'yes' | 'no' | null> {
     try {
@@ -1247,19 +1468,28 @@ export function createDeepworkWakeupHook(
     }
 
     // Override "yes" if there is unreconciled background work
-    if (answer === 'yes' && backgroundJobBoard.hasTerminalUnreconciled(sessionID)) {
-      log('[deepwork-wakeup] orchestrator said yes but unreconciled work remains, continuing', {
-        sessionID,
-      });
+    if (
+      answer === 'yes' &&
+      backgroundJobBoard.hasTerminalUnreconciled(sessionID)
+    ) {
+      log(
+        '[deepwork-wakeup] orchestrator said yes but unreconciled work remains, continuing',
+        {
+          sessionID,
+        },
+      );
       await sendPrompt(sessionID, CONTINUE_MESSAGE, 'done-check-yes-override');
       state.awaitingDoneCheck = false;
       return;
     }
 
     if (answer === 'yes') {
-      log('[deepwork-wakeup] orchestrator confirmed done, stopping periodic timer', {
-        sessionID,
-      });
+      log(
+        '[deepwork-wakeup] orchestrator confirmed done, stopping periodic timer',
+        {
+          sessionID,
+        },
+      );
       clearTimer(sessionID);
       state.awaitingDoneCheck = false;
       return;
@@ -1284,7 +1514,15 @@ export function createDeepworkWakeupHook(
       event: {
         type: string;
         properties?: {
-          info?: { id?: string };
+          info?: {
+            id?: string;
+            sessionID?: string;
+            role?: string;
+            tokens?: {
+              input?: number;
+              output?: number;
+            };
+          };
           sessionID?: string;
           status?: { type?: string };
         };
@@ -1292,7 +1530,9 @@ export function createDeepworkWakeupHook(
     }): Promise<void> => {
       const event = input.event;
       const sessionId =
-        event.properties?.info?.id ?? event.properties?.sessionID;
+        event.properties?.info?.id ??
+        event.properties?.info?.sessionID ??
+        event.properties?.sessionID;
 
       if (!sessionId) return;
 
@@ -1305,6 +1545,64 @@ export function createDeepworkWakeupHook(
         sessionsSeen.delete(sessionId);
         persistGate(directory, sessionId, undefined); // remove persisted gate
         persistConsultation(directory, sessionId, undefined); // remove persisted consultation
+        return;
+      }
+
+      // ── Context-compact: handle message.updated for token tracking ──
+      if (event.type === 'message.updated') {
+        if (!shouldManageSession(sessionId)) return;
+        const info = event.properties?.info;
+        if (!info || info.role !== 'assistant') return;
+        const inputTokens = info.tokens?.input ?? 0;
+        if (inputTokens <= 0) return;
+
+        const state = getState(sessionId);
+        state.lastInputTokens = inputTokens;
+
+        // Only trigger if:
+        // - tokens exceed threshold
+        // - no compact cycle is in progress
+        // - cooldown has passed since the last cycle
+        if (
+          inputTokens >= contextThreshold &&
+          state.compactCycle === 'normal' &&
+          Date.now() - state.lastCompactAt >= compactCooldownMs
+        ) {
+          log(
+            '[deepwork-wakeup] context threshold exceeded, starting compact cycle',
+            {
+              sessionId,
+              inputTokens,
+              threshold: contextThreshold,
+            },
+          );
+          state.compactCycle = 'pendingWrite';
+          // The write prompt will be sent when the orchestrator goes idle
+          // (via sendPrompt in the idle handler). This avoids sending
+          // promptAsync to a busy session and ensures the write prompt is
+          // the next thing the orchestrator processes after its current
+          // turn completes.
+        }
+        return;
+      }
+
+      // ── Context-compact: handle session.compacted event ─────────────
+      if (event.type === 'session.compacted') {
+        if (!shouldManageSession(sessionId)) return;
+        const state = getState(sessionId);
+        if (state.compactCycle === 'compacting') {
+          log('[deepwork-wakeup] compaction complete, sending refresh prompt', {
+            sessionId,
+          });
+          state.compactCycle = 'awaitingRefresh';
+          // Send the refresh prompt — the orchestrator re-reads its
+          // deepwork file and continues.
+          await sendPrompt(
+            sessionId,
+            COMPACT_REFRESH_MESSAGE,
+            'compact-refresh',
+          );
+        }
         return;
       }
 
@@ -1330,6 +1628,66 @@ export function createDeepworkWakeupHook(
         const state = getState(sessionId);
         state.idle = true;
 
+        // ── Context-compact cycle handling ──────────────────────────
+        // When the orchestrator goes idle after we detected high tokens
+        // (pendingWrite), send the write prompt. When it goes idle after
+        // writing to its deepwork file (awaitingWrite), trigger compaction.
+        // When it goes idle after reading the refresh prompt
+        // (awaitingRefresh), complete the cycle.
+        if (state.compactCycle === 'pendingWrite') {
+          log(
+            '[deepwork-wakeup] orchestrator idle, sending compact write prompt',
+            {
+              sessionId,
+            },
+          );
+          const sent = await sendPrompt(
+            sessionId,
+            COMPACT_WRITE_MESSAGE,
+            'compact-write',
+          );
+          if (sent) {
+            state.compactCycle = 'awaitingWrite';
+          } else {
+            // sendPrompt failed (wake in flight, dedup, etc.) — retry on
+            // next idle by keeping pendingWrite.
+            log(
+              '[deepwork-wakeup] compact write prompt not sent, will retry on next idle',
+              {
+                sessionId,
+              },
+            );
+          }
+          return; // don't fire done-check/gate during compact cycle
+        }
+        if (state.compactCycle === 'awaitingWrite') {
+          log(
+            '[deepwork-wakeup] orchestrator idle after write, triggering compaction',
+            {
+              sessionId,
+            },
+          );
+          state.compactCycle = 'compacting';
+          triggerCompaction(sessionId);
+          return; // don't fire done-check/gate during compaction
+        }
+        if (state.compactCycle === 'awaitingRefresh') {
+          log(
+            '[deepwork-wakeup] orchestrator idle after refresh, completing compact cycle',
+            {
+              sessionId,
+            },
+          );
+          state.compactCycle = 'normal';
+          state.lastCompactAt = Date.now();
+          // Fall through to normal idle handling — the orchestrator may
+          // have more work to do after refreshing its context.
+        }
+        // Suppress done-check/gate while compaction is in progress
+        if (state.compactCycle === 'compacting') {
+          return;
+        }
+
         // If this is the first time we've seen this session (after a
         // process restart), try to reload any persisted gate from disk.
         // The gate is in-memory and resets on restart — without this, the
@@ -1344,7 +1702,10 @@ export function createDeepworkWakeupHook(
         // Reload any persisted consultation (periodic babysitter) on first
         // sight after a restart.
         if (!state.consultation && !sessionsSeen.has(sessionId)) {
-          const persistedConsultation = loadPersistedConsultation(directory, sessionId);
+          const persistedConsultation = loadPersistedConsultation(
+            directory,
+            sessionId,
+          );
           if (persistedConsultation) {
             state.consultation = persistedConsultation;
             startConsultationTimer(sessionId, persistedConsultation);
@@ -1395,9 +1756,12 @@ export function createDeepworkWakeupHook(
         // the first idle event's sendGateCheck is still in flight.
         if (state.awaitingDoneCheck && state.gate) {
           if (!state.gateCheckPromptSent) {
-            log('[deepwork-wakeup] idle: gate-check prompt not yet sent, skipping', {
-              sessionID: sessionId,
-            });
+            log(
+              '[deepwork-wakeup] idle: gate-check prompt not yet sent, skipping',
+              {
+                sessionID: sessionId,
+              },
+            );
             return;
           }
           log('[deepwork-wakeup] idle: handling gate-check response', {
@@ -1454,9 +1818,12 @@ export function createDeepworkWakeupHook(
           // still reviewing.
           !(hasPendingTaskCall?.(sessionId) ?? false)
         ) {
-          log('[deepwork-wakeup] firing one-shot done-check from idle handler (periodicDoneCheck disabled)', {
-            sessionID: sessionId,
-          });
+          log(
+            '[deepwork-wakeup] firing one-shot done-check from idle handler (periodicDoneCheck disabled)',
+            {
+              sessionID: sessionId,
+            },
+          );
           sendDoneCheck(sessionId).catch(() => {});
         }
 
@@ -1470,7 +1837,8 @@ export function createDeepworkWakeupHook(
         // a new deck review while the fixer result is still being processed.
         if (state.gate) {
           const hasRunning = backgroundJobBoard.hasRunning(sessionId);
-          const hasUnreconciled = backgroundJobBoard.hasTerminalUnreconciled(sessionId);
+          const hasUnreconciled =
+            backgroundJobBoard.hasTerminalUnreconciled(sessionId);
           // Cooldown: don't fire the gate if it recently FAILed OR if there
           // was recent background activity. Both give the orchestrator time
           // to act before the gate re-fires. Without the background-activity
@@ -1479,13 +1847,23 @@ export function createDeepworkWakeupHook(
           const now = Date.now();
           const gateFailCooldown =
             state.lastGateFailAt > 0
-              ? Math.max(0, GATE_FAIL_COOLDOWN_MS - (now - state.lastGateFailAt))
+              ? Math.max(
+                  0,
+                  GATE_FAIL_COOLDOWN_MS - (now - state.lastGateFailAt),
+                )
               : 0;
           const bgActivityCooldown =
             state.lastBackgroundActivityAt > 0
-              ? Math.max(0, GATE_FAIL_COOLDOWN_MS - (now - state.lastBackgroundActivityAt))
+              ? Math.max(
+                  0,
+                  GATE_FAIL_COOLDOWN_MS -
+                    (now - state.lastBackgroundActivityAt),
+                )
               : 0;
-          const cooldownRemaining = Math.max(gateFailCooldown, bgActivityCooldown);
+          const cooldownRemaining = Math.max(
+            gateFailCooldown,
+            bgActivityCooldown,
+          );
           log('[deepwork-wakeup] idle: gate-fire guard check', {
             sessionID: sessionId,
             gate: true,
@@ -1534,7 +1912,11 @@ export function createDeepworkWakeupHook(
       if (!parentState.idle) return;
       if (parentState.awaitingDoneCheck) return; // done-check in progress, don't interfere
 
-      await sendPrompt(parentID, EVENT_WAKEUP_MESSAGE, `background-idle:${sessionId}`);
+      await sendPrompt(
+        parentID,
+        EVENT_WAKEUP_MESSAGE,
+        `background-idle:${sessionId}`,
+      );
     },
 
     /**
@@ -1597,6 +1979,35 @@ export function createDeepworkWakeupHook(
       } else {
         clearConsultationTimer(sessionID);
       }
+    },
+
+    /**
+     * Handler for the `experimental.session.compacting` plugin hook.
+     *
+     * Called before session compaction starts. When the session is a
+     * managed orchestrator, injects a context string that tells the
+     * compaction to preserve deepwork file references and key context
+     * the orchestrator will need after compaction.
+     */
+    compacting: async (
+      input: { sessionID: string },
+      output: { context: string[]; prompt?: string },
+    ): Promise<void> => {
+      if (!shouldManageSession(input.sessionID)) return;
+      output.context.push(
+        'The orchestrator maintains a deepwork progress file under `.slim/deepwork/`. ' +
+          'After compaction, the orchestrator will re-read this file to restore its ' +
+          'full working context. Preserve any references to deepwork file paths, ' +
+          'active phase status, file references, and key decisions in the summary. ' +
+          'The deepwork file itself is NOT part of the context — it is an external ' +
+          'file the orchestrator reads after compaction.',
+      );
+      log(
+        '[deepwork-wakeup] injected deepwork context into compaction prompt',
+        {
+          sessionID: input.sessionID,
+        },
+      );
     },
 
     /** @internal Exposed for testing */

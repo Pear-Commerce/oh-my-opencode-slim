@@ -1,8 +1,8 @@
-import { describe, expect, test, mock, beforeEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { execSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { createFixerReviewHook } from './index';
 
 function ensureDir(filePath: string): void {
@@ -76,7 +76,10 @@ describe('fixer-review hook', () => {
     // 40-line production change in 1 file → exceeds minProductionLines (30)
     writeFile(
       join(dir, 'src/server/logic.js'),
-      Array.from({ length: 40 }, (_, i) => `function fn${i}() { return ${i}; }`).join('\n') + '\n',
+      Array.from(
+        { length: 40 },
+        (_, i) => `function fn${i}() { return ${i}; }`,
+      ).join('\n') + '\n',
     );
 
     const { client, create, promptAsync } = makeClient();
@@ -143,7 +146,9 @@ describe('fixer-review hook', () => {
     // 100-line test file change → should NOT trigger (test files excluded)
     writeFile(
       join(dir, 'tests/logic.test.js'),
-      Array.from({ length: 100 }, (_, i) => `test('test${i}', () => {});`).join('\n') + '\n',
+      Array.from({ length: 100 }, (_, i) => `test('test${i}', () => {});`).join(
+        '\n',
+      ) + '\n',
     );
 
     const { client, create } = makeClient();
@@ -337,7 +342,9 @@ describe('fixer-review hook', () => {
       { args: { subagent_type: 'fixer' } },
     );
 
-    const captured = (hook as unknown as { _capturedCalls: Map<string, unknown> })._capturedCalls;
+    const captured = (
+      hook as unknown as { _capturedCalls: Map<string, unknown> }
+    )._capturedCalls;
     expect(captured.has('call1')).toBe(true);
 
     await hook['tool.execute.after'](

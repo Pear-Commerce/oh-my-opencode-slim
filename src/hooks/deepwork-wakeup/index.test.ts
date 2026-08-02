@@ -1,10 +1,14 @@
-import { describe, expect, test, mock } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
+import { execSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { execSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
 import { BackgroundJobBoard } from '../../utils/background-job-board';
-import { createDeepworkWakeupHook, type LoopGate, type PeriodicConsultation } from './index';
+import {
+  createDeepworkWakeupHook,
+  type LoopGate,
+  type PeriodicConsultation,
+} from './index';
 
 function makeClient(lastAssistantText = 'no') {
   const promptAsync = mock(async () => {});
@@ -23,10 +27,11 @@ function makeClient(lastAssistantText = 'no') {
   const create = mock(async () => ({ data: { id: 'ses_adjudicator' } }));
   const prompt = mock(async () => {});
   const abort = mock(async () => {});
+  const command = mock(async () => ({}));
   const client = {
-    session: { promptAsync, messages, create, prompt, abort },
+    session: { promptAsync, messages, create, prompt, abort, command },
   } as unknown as Parameters<typeof createDeepworkWakeupHook>[0];
-  return { client, promptAsync, messages, create, prompt, abort };
+  return { client, promptAsync, messages, create, prompt, abort, command };
 }
 
 function idleEvent(sessionId: string) {
@@ -368,7 +373,8 @@ describe('deepwork-wakeup hook', () => {
     await hook.event(idleEvent('ses_orch'));
     await hook.event(idleEvent('ses_ora1'));
 
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
     expect(timers.has('ses_orch')).toBe(true);
     hook._destroy();
   });
@@ -385,7 +391,8 @@ describe('deepwork-wakeup hook', () => {
     });
 
     await hook.event(idleEvent('ses_orch'));
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
     expect(timers.has('ses_orch')).toBe(false);
   });
 
@@ -409,7 +416,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     // Orchestrator goes idle → timer starts
@@ -420,7 +428,9 @@ describe('deepwork-wakeup hook', () => {
 
     // First promptAsync should be the done-check question
     expect(promptAsync).toHaveBeenCalledTimes(1);
-    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain('yes or no');
+    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain(
+      'yes or no',
+    );
 
     // Simulate: orchestrator becomes busy (processing the question)
     await hook.event(busyEvent('ses_orch'));
@@ -431,7 +441,9 @@ describe('deepwork-wakeup hook', () => {
     // Should have read the response and sent continue prompt
     expect(messages).toHaveBeenCalledTimes(1);
     expect(promptAsync).toHaveBeenCalledTimes(2);
-    expect(promptAsync.mock.calls[1]?.[0].body.parts[0].text).toContain('Continue');
+    expect(promptAsync.mock.calls[1]?.[0].body.parts[0].text).toContain(
+      'Continue',
+    );
 
     hook._destroy();
   });
@@ -456,7 +468,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     await hook.event(idleEvent('ses_orch'));
@@ -469,7 +482,8 @@ describe('deepwork-wakeup hook', () => {
     await hook.event(idleEvent('ses_orch'));
 
     // Timer should be cleared (orchestrator said yes)
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
     expect(timers.has('ses_orch')).toBe(false);
 
     // Only one promptAsync call (the done-check), no continue prompt
@@ -496,7 +510,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     await hook.event(idleEvent('ses_orch'));
@@ -515,10 +530,13 @@ describe('deepwork-wakeup hook', () => {
     await hook.event(idleEvent('ses_orch'));
 
     // Should NOT have stopped — should have sent continue prompt
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
     expect(timers.has('ses_orch')).toBe(true);
     expect(promptAsync).toHaveBeenCalledTimes(2);
-    expect(promptAsync.mock.calls[1]?.[0].body.parts[0].text).toContain('Continue');
+    expect(promptAsync.mock.calls[1]?.[0].body.parts[0].text).toContain(
+      'Continue',
+    );
 
     hook._destroy();
   });
@@ -535,7 +553,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     await hook.event(idleEvent('ses_orch'));
@@ -557,11 +576,13 @@ describe('deepwork-wakeup hook', () => {
       intervalMs: 50,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     await hook.event(idleEvent('ses_orch'));
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
     expect(timers.has('ses_orch')).toBe(true);
 
     await hook.event(deletedEvent('ses_orch'));
@@ -581,14 +602,19 @@ describe('deepwork-wakeup hook', () => {
       maxNoProgress: 3,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     // Start the timer
     await hook.event(idleEvent('ses_orch'));
 
     // Manually set consecutiveNoProgress to just below the cap
-    const states = (hook as unknown as { _states: Map<string, { consecutiveNoProgress: number }> })._states;
+    const states = (
+      hook as unknown as {
+        _states: Map<string, { consecutiveNoProgress: number }>;
+      }
+    )._states;
     states.get('ses_orch')!.consecutiveNoProgress = 2;
 
     // Wait for timer to fire — it should send a done-check
@@ -607,7 +633,8 @@ describe('deepwork-wakeup hook', () => {
     // Wait for the next timer tick — should check 3 >= 3 and clear the timer
     await new Promise((r) => setTimeout(r, 25));
 
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
     expect(timers.has('ses_orch')).toBe(false);
   });
 
@@ -631,7 +658,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     await hook.event(idleEvent('ses_orch'));
@@ -642,7 +670,9 @@ describe('deepwork-wakeup hook', () => {
 
     // Ambiguous → defaults to "no" → continue prompt sent
     expect(promptAsync).toHaveBeenCalledTimes(2);
-    expect(promptAsync.mock.calls[1]?.[0].body.parts[0].text).toContain('Continue');
+    expect(promptAsync.mock.calls[1]?.[0].body.parts[0].text).toContain(
+      'Continue',
+    );
 
     hook._destroy();
   });
@@ -658,14 +688,16 @@ describe('deepwork-wakeup hook', () => {
       intervalMs: 50,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
     hasHad.add('ses_orch2');
 
     await hook.event(idleEvent('ses_orch'));
     await hook.event(idleEvent('ses_orch2'));
 
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
     expect(timers.size).toBe(2);
 
     hook._destroy();
@@ -692,7 +724,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     // Orchestrator idle → timer starts
@@ -740,7 +773,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     // Orchestrator goes idle (correctly waiting for fixer) → timer starts
@@ -756,7 +790,9 @@ describe('deepwork-wakeup hook', () => {
     await hook.event(idleEvent('ses_fix1'));
     expect(promptAsync).toHaveBeenCalledTimes(1);
     // The wake should be the event-driven reconcile message, not the done-check
-    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain('reconcile');
+    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain(
+      'reconcile',
+    );
 
     hook._destroy();
   });
@@ -781,7 +817,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     await hook.event(idleEvent('ses_orch'));
@@ -789,7 +826,9 @@ describe('deepwork-wakeup hook', () => {
     // Wait for timer — done-check SHOULD fire (no running jobs)
     await new Promise((r) => setTimeout(r, 40));
     expect(promptAsync).toHaveBeenCalledTimes(1);
-    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain('yes or no');
+    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain(
+      'yes or no',
+    );
 
     hook._destroy();
   });
@@ -849,7 +888,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 50, // give us time to inject busy during read
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     // Start: idle → timer fires → done-check sent
@@ -911,7 +951,8 @@ describe('deepwork-wakeup hook', () => {
       directory: dir,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     // Set a command gate that always passes
@@ -921,7 +962,8 @@ describe('deepwork-wakeup hook', () => {
     await new Promise((r) => setTimeout(r, 50));
 
     // Gate passed → timer cleared, no continue prompt sent
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
     expect(timers.has('ses_orch')).toBe(false);
     expect(promptAsync).not.toHaveBeenCalled();
   });
@@ -948,7 +990,8 @@ describe('deepwork-wakeup hook', () => {
       directory: dir,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     // Set a command gate that always fails
@@ -985,7 +1028,8 @@ describe('deepwork-wakeup hook', () => {
       directory: dir,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     hook.setGate('ses_orch', { type: 'command', command: 'true' });
@@ -995,7 +1039,8 @@ describe('deepwork-wakeup hook', () => {
 
     // Gate passed but unreconciled work → continue prompt sent, timer still running
     expect(promptAsync).toHaveBeenCalledTimes(1);
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
     expect(timers.has('ses_orch')).toBe(true);
 
     hook._destroy();
@@ -1011,7 +1056,9 @@ describe('deepwork-wakeup hook', () => {
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
     board.markReconciled('ses_ora1');
 
-    const { client, promptAsync, create, prompt, abort } = makeClient('GATE: PASS\nAll clear.');
+    const { client, promptAsync, create, prompt, abort } = makeClient(
+      'GATE: PASS\nAll clear.',
+    );
 
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
@@ -1022,7 +1069,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     hook.setGate('ses_orch', {
@@ -1092,7 +1140,8 @@ describe('deepwork-wakeup hook', () => {
       },
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     hook.setGate('ses_orch', {
@@ -1107,7 +1156,9 @@ describe('deepwork-wakeup hook', () => {
     // 'oracle', so the orchestrator spawns the scoped specialist (sol).
     expect(promptAsync).toHaveBeenCalledTimes(1);
     const gateCheckMsg = promptAsync.mock.calls[0]?.[0].body.parts[0].text;
-    expect(gateCheckMsg).toContain('subagent_type "oracle__orchestrator-glm52-sol"');
+    expect(gateCheckMsg).toContain(
+      'subagent_type "oracle__orchestrator-glm52-sol"',
+    );
     expect(gateCheckMsg).not.toContain('subagent_type "oracle"');
 
     hook._destroy();
@@ -1137,7 +1188,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     hook.setGate('ses_orch', {
@@ -1188,7 +1240,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     hook.setGate('ses_orch', {
@@ -1206,7 +1259,8 @@ describe('deepwork-wakeup hook', () => {
     await hook.event(idleEvent('ses_orch'));
 
     // PASS → timer cleared, no continue prompt
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
     expect(timers.has('ses_orch')).toBe(false);
     expect(promptAsync).toHaveBeenCalledTimes(1);
 
@@ -1236,7 +1290,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     hook.setGate('ses_orch', {
@@ -1283,7 +1338,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     hook.setGate('ses_orch', {
@@ -1326,7 +1382,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     hook.setGate('ses_orch', {
@@ -1369,7 +1426,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     // Set a command gate, then clear it
@@ -1381,7 +1439,9 @@ describe('deepwork-wakeup hook', () => {
 
     // Should use model done-check (sends the yes/no question)
     expect(promptAsync).toHaveBeenCalledTimes(1);
-    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain('yes or no');
+    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain(
+      'yes or no',
+    );
   });
 
   test('gate does not fire while background jobs are running', async () => {
@@ -1405,7 +1465,8 @@ describe('deepwork-wakeup hook', () => {
       directory: dir,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     hook.setGate('ses_orch', { type: 'command', command: 'true' });
@@ -1415,7 +1476,8 @@ describe('deepwork-wakeup hook', () => {
 
     // Fixer running → gate should not fire
     expect(promptAsync).not.toHaveBeenCalled();
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
     expect(timers.has('ses_orch')).toBe(true); // timer still running, waiting
 
     hook._destroy();
@@ -1444,7 +1506,8 @@ describe('deepwork-wakeup hook', () => {
 
     // Orchestrator goes idle first (no timer starts — no background work, no gate)
     await hook.event(idleEvent('ses_orch'));
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
     expect(timers.has('ses_orch')).toBe(false);
 
     // Now set a gate — timer should start immediately (session is idle)
@@ -1476,7 +1539,8 @@ describe('deepwork-wakeup hook', () => {
 
     // Session is busy — set gate (timer should NOT start yet)
     hook.setGate('ses_orch', { type: 'command', command: 'false' });
-    const timers = (hook as unknown as { _timers: Map<string, unknown> })._timers;
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
     expect(timers.has('ses_orch')).toBe(false);
 
     // Session goes idle — timer should start now (gate is set)
@@ -1509,7 +1573,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     // Set a consultation with a very short interval for testing
@@ -1519,7 +1584,9 @@ describe('deepwork-wakeup hook', () => {
     } as PeriodicConsultation);
 
     // Verify the consultation timer was started
-    const consultationTimers = (hook as unknown as { _consultationTimers: Map<string, unknown> })._consultationTimers;
+    const consultationTimers = (
+      hook as unknown as { _consultationTimers: Map<string, unknown> }
+    )._consultationTimers;
     expect(consultationTimers.has('ses_orch')).toBe(true);
 
     // Clear the consultation
@@ -1550,7 +1617,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     // Set a consultation
@@ -1562,7 +1630,11 @@ describe('deepwork-wakeup hook', () => {
     // Simulate the timer firing while the orchestrator is busy: set
     // consultationPending manually, then send a busy event followed by
     // an idle event.
-    const states = (hook as unknown as { _states: Map<string, { consultationPending: boolean }> })._states;
+    const states = (
+      hook as unknown as {
+        _states: Map<string, { consultationPending: boolean }>;
+      }
+    )._states;
     states.get('ses_orch')!.consultationPending = true;
 
     // Orchestrator goes idle → queued consultation should fire
@@ -1610,7 +1682,10 @@ describe('deepwork-wakeup hook', () => {
     } as PeriodicConsultation);
 
     // Verify it was persisted
-    const consultationFile = join(dir, '.slim/deepwork/consultations/ses_orch.json');
+    const consultationFile = join(
+      dir,
+      '.slim/deepwork/consultations/ses_orch.json',
+    );
     const { existsSync, readFileSync } = await import('node:fs');
     expect(existsSync(consultationFile)).toBe(true);
     const persisted = JSON.parse(readFileSync(consultationFile, 'utf-8'));
@@ -1646,7 +1721,8 @@ describe('deepwork-wakeup hook', () => {
       messageReadDelayMs: 0,
     });
 
-    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })._hasHadBackgroundWork;
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
     hasHad.add('ses_orch');
 
     // Set a consultation with a very short interval for testing
@@ -1655,7 +1731,18 @@ describe('deepwork-wakeup hook', () => {
       intervalMinutes: 1, // 1 minute — 2x threshold = 2 minutes
     } as PeriodicConsultation);
 
-    const states = (hook as unknown as { _states: Map<string, { consultationPending: boolean; consultationQueuedAt: number; idle: boolean }> })._states;
+    const states = (
+      hook as unknown as {
+        _states: Map<
+          string,
+          {
+            consultationPending: boolean;
+            consultationQueuedAt: number;
+            idle: boolean;
+          }
+        >;
+      }
+    )._states;
 
     // Simulate: orchestrator is busy, consultation gets queued
     states.get('ses_orch')!.idle = false;
@@ -1686,6 +1773,377 @@ describe('deepwork-wakeup hook', () => {
 
     // For this test, we just verify the threshold logic is correct.
     // The force-fire behavior is covered by the log entry check above.
+
+    hook._destroy();
+  });
+
+  // ── Context-compact cycle tests ──────────────────────────────────────
+
+  function messageUpdatedEvent(sessionId: string, inputTokens: number) {
+    return {
+      event: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: sessionId,
+            sessionID: sessionId,
+            role: 'assistant',
+            tokens: { input: inputTokens, output: 100 },
+          },
+        },
+      },
+    };
+  }
+
+  function compactedEvent(sessionId: string) {
+    return {
+      event: {
+        type: 'session.compacted',
+        properties: { sessionID: sessionId },
+      },
+    };
+  }
+
+  test('context-compact: sends write prompt when tokens exceed threshold', async () => {
+    const board = new BackgroundJobBoard();
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      ...FAST_OPTS,
+      contextThreshold: 400_000,
+    });
+
+    // message.updated sets state to 'pendingWrite' (does NOT send prompt yet)
+    await hook.event(messageUpdatedEvent('ses_orch', 450_000));
+    expect(promptAsync).not.toHaveBeenCalled();
+
+    // Orchestrator goes idle → write prompt is sent
+    await hook.event(idleEvent('ses_orch'));
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    const call = promptAsync.mock.calls[0]?.[0];
+    expect(call.path.id).toBe('ses_orch');
+    expect(call.body.parts[0].text).toContain('deepwork');
+    expect(call.body.parts[0].text).toContain('compaction');
+
+    const state = (
+      hook as unknown as { _states: Map<string, { compactCycle: string }> }
+    )._states.get('ses_orch');
+    expect(state?.compactCycle).toBe('awaitingWrite');
+
+    hook._destroy();
+  });
+
+  test('context-compact: does not trigger when tokens are below threshold', async () => {
+    const board = new BackgroundJobBoard();
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      ...FAST_OPTS,
+      contextThreshold: 400_000,
+    });
+
+    await hook.event(messageUpdatedEvent('ses_orch', 350_000));
+    await hook.event(idleEvent('ses_orch'));
+    expect(promptAsync).not.toHaveBeenCalled();
+
+    hook._destroy();
+  });
+
+  test('context-compact: does not trigger when cycle already in progress', async () => {
+    const board = new BackgroundJobBoard();
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      ...FAST_OPTS,
+      contextThreshold: 400_000,
+    });
+
+    // First event sets pendingWrite
+    await hook.event(messageUpdatedEvent('ses_orch', 450_000));
+    // Idle sends write prompt
+    await hook.event(idleEvent('ses_orch'));
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    // Second message.updated should not re-trigger (cycle in progress)
+    await hook.event(messageUpdatedEvent('ses_orch', 500_000));
+    // Idle triggers compaction (not another write prompt)
+    await hook.event(idleEvent('ses_orch'));
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    hook._destroy();
+  });
+
+  test('context-compact: does not trigger during cooldown', async () => {
+    const board = new BackgroundJobBoard();
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      ...FAST_OPTS,
+      contextThreshold: 400_000,
+      compactCooldownMs: 10_000,
+    });
+
+    // Send an idle event first to create the session state
+    await hook.event(idleEvent('ses_orch'));
+
+    // Manually set lastCompactAt to simulate a recently completed cycle
+    const states = (
+      hook as unknown as {
+        _states: Map<string, { lastCompactAt: number; compactCycle: string }>;
+      }
+    )._states;
+    const state = states.get('ses_orch')!;
+    state.lastCompactAt = Date.now(); // just completed
+
+    await hook.event(messageUpdatedEvent('ses_orch', 450_000));
+    await hook.event(idleEvent('ses_orch'));
+    expect(promptAsync).not.toHaveBeenCalled();
+
+    hook._destroy();
+  });
+
+  test('context-compact: triggers compaction on idle after write', async () => {
+    const board = new BackgroundJobBoard();
+    const { client, promptAsync, command } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      ...FAST_OPTS,
+      contextThreshold: 400_000,
+    });
+
+    // Start the compact cycle: message.updated → pendingWrite
+    await hook.event(messageUpdatedEvent('ses_orch', 450_000));
+    // Idle → send write prompt → awaitingWrite
+    await hook.event(idleEvent('ses_orch'));
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    // Orchestrator goes idle after writing → trigger compaction
+    await hook.event(idleEvent('ses_orch'));
+
+    // Compaction should have been triggered via session.command
+    expect(command).toHaveBeenCalledTimes(1);
+    const cmdCall = command.mock.calls[0]?.[0];
+    expect(cmdCall.path.id).toBe('ses_orch');
+    expect(cmdCall.body.command).toBe('session.compact');
+
+    const state = (
+      hook as unknown as { _states: Map<string, { compactCycle: string }> }
+    )._states.get('ses_orch');
+    expect(state?.compactCycle).toBe('compacting');
+
+    hook._destroy();
+  });
+
+  test('context-compact: sends refresh prompt after session.compacted', async () => {
+    const board = new BackgroundJobBoard();
+    const { client, promptAsync, command } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      ...FAST_OPTS,
+      contextThreshold: 400_000,
+    });
+
+    // Full cycle up to compaction
+    await hook.event(messageUpdatedEvent('ses_orch', 450_000));
+    await hook.event(idleEvent('ses_orch')); // send write prompt
+    await hook.event(idleEvent('ses_orch')); // trigger compaction
+    expect(command).toHaveBeenCalledTimes(1);
+
+    // session.compacted event → refresh prompt
+    await hook.event(compactedEvent('ses_orch'));
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+    const refreshCall = promptAsync.mock.calls[1]?.[0];
+    expect(refreshCall.body.parts[0].text).toContain(
+      'Compaction has completed',
+    );
+    expect(refreshCall.body.parts[0].text).toContain('deepwork');
+
+    const state = (
+      hook as unknown as { _states: Map<string, { compactCycle: string }> }
+    )._states.get('ses_orch');
+    expect(state?.compactCycle).toBe('awaitingRefresh');
+
+    hook._destroy();
+  });
+
+  test('context-compact: completes cycle on idle after refresh', async () => {
+    const board = new BackgroundJobBoard();
+    const { client, promptAsync, command } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      ...FAST_OPTS,
+      contextThreshold: 400_000,
+    });
+
+    // Full cycle: message.updated → idle (write) → idle (compact) → compacted → idle (refresh) → idle (complete)
+    await hook.event(messageUpdatedEvent('ses_orch', 450_000));
+    await hook.event(idleEvent('ses_orch')); // send write prompt
+    await hook.event(idleEvent('ses_orch')); // trigger compaction
+    await hook.event(compactedEvent('ses_orch')); // send refresh prompt
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+
+    // Orchestrator goes idle after reading the deepwork file
+    await hook.event(idleEvent('ses_orch'));
+
+    const state = (
+      hook as unknown as {
+        _states: Map<string, { compactCycle: string; lastCompactAt: number }>;
+      }
+    )._states.get('ses_orch');
+    expect(state?.compactCycle).toBe('normal');
+    expect(state?.lastCompactAt).toBeGreaterThan(0);
+
+    hook._destroy();
+  });
+
+  test('context-compact: suppresses done-check during compact cycle', async () => {
+    const board = new BackgroundJobBoard();
+    const { client, promptAsync, command } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      ...FAST_OPTS,
+      contextThreshold: 400_000,
+      periodicDoneCheck: false,
+    });
+
+    // Mark as having had background work so done-check would normally fire
+    const hasHad = (hook as unknown as { _hasHadBackgroundWork: Set<string> })
+      ._hasHadBackgroundWork;
+    hasHad.add('ses_orch');
+
+    // Start compact cycle
+    await hook.event(messageUpdatedEvent('ses_orch', 450_000));
+    // Idle → send write prompt (NOT done-check)
+    await hook.event(idleEvent('ses_orch'));
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain(
+      'deepwork',
+    );
+
+    // Idle after write → trigger compaction (NOT done-check)
+    await hook.event(idleEvent('ses_orch'));
+    expect(command).toHaveBeenCalledTimes(1);
+    // No additional promptAsync calls (done-check would have been one)
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    hook._destroy();
+  });
+
+  test('context-compact: ignores non-managed sessions', async () => {
+    const board = new BackgroundJobBoard();
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      ...FAST_OPTS,
+      contextThreshold: 400_000,
+    });
+
+    await hook.event(messageUpdatedEvent('ses_other', 450_000));
+    await hook.event(idleEvent('ses_other'));
+    expect(promptAsync).not.toHaveBeenCalled();
+
+    hook._destroy();
+  });
+
+  test('context-compact: ignores user messages (only assistant tokens)', async () => {
+    const board = new BackgroundJobBoard();
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      ...FAST_OPTS,
+      contextThreshold: 400_000,
+    });
+
+    // User message with high tokens — should be ignored
+    await hook.event({
+      event: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'ses_orch',
+            sessionID: 'ses_orch',
+            role: 'user',
+            tokens: { input: 450_000, output: 0 },
+          },
+        },
+      },
+    });
+
+    await hook.event(idleEvent('ses_orch'));
+    expect(promptAsync).not.toHaveBeenCalled();
+
+    hook._destroy();
+  });
+
+  test('context-compact: compacting hook injects context for managed sessions', async () => {
+    const board = new BackgroundJobBoard();
+    const { client } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      ...FAST_OPTS,
+      contextThreshold: 400_000,
+    });
+
+    const output: { context: string[]; prompt?: string } = { context: [] };
+    await hook.compacting({ sessionID: 'ses_orch' }, output);
+
+    expect(output.context.length).toBeGreaterThan(0);
+    expect(output.context[0]).toContain('deepwork');
+
+    hook._destroy();
+  });
+
+  test('context-compact: compacting hook does nothing for non-managed sessions', async () => {
+    const board = new BackgroundJobBoard();
+    const { client } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      ...FAST_OPTS,
+      contextThreshold: 400_000,
+    });
+
+    const output: { context: string[]; prompt?: string } = { context: [] };
+    await hook.compacting({ sessionID: 'ses_other' }, output);
+
+    expect(output.context.length).toBe(0);
+
+    hook._destroy();
+  });
+
+  test('context-compact: cleans up state on session.deleted', async () => {
+    const board = new BackgroundJobBoard();
+    const { client, promptAsync } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      ...FAST_OPTS,
+      contextThreshold: 400_000,
+    });
+
+    // Start compact cycle
+    await hook.event(messageUpdatedEvent('ses_orch', 450_000));
+    await hook.event(idleEvent('ses_orch'));
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    // Delete session
+    await hook.event(deletedEvent('ses_orch'));
+
+    // State should be cleaned up
+    const states = (hook as unknown as { _states: Map<string, unknown> })
+      ._states;
+    expect(states.has('ses_orch')).toBe(false);
 
     hook._destroy();
   });

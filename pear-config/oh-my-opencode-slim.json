@@ -6,20 +6,13 @@
       "orchestrator": {
         "model": "openrouter/openai/gpt-5.5",
         "variant": "medium",
-        "skills": [
-          "*"
-        ],
-        "mcps": [
-          "*",
-          "!context7"
-        ]
+        "skills": ["*"],
+        "mcps": ["*", "!context7"]
       },
       "oracle": {
         "model": "openrouter/anthropic/claude-opus-4.8",
         "variant": "xhigh",
-        "skills": [
-          "simplify"
-        ],
+        "skills": ["simplify"],
         "mcps": []
       },
       "council": {
@@ -31,11 +24,7 @@
       "librarian": {
         "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
         "skills": [],
-        "mcps": [
-          "websearch",
-          "context7",
-          "gh_grep"
-        ]
+        "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
         "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
@@ -58,20 +47,13 @@
       "orchestrator": {
         "model": "openrouter/openai/gpt-5.5",
         "variant": "medium",
-        "skills": [
-          "*"
-        ],
-        "mcps": [
-          "*",
-          "!context7"
-        ]
+        "skills": ["*"],
+        "mcps": ["*", "!context7"]
       },
       "oracle": {
         "model": "openrouter/anthropic/claude-opus-4.8",
         "variant": "xhigh",
-        "skills": [
-          "simplify"
-        ],
+        "skills": ["simplify"],
         "mcps": []
       },
       "council": {
@@ -83,11 +65,7 @@
       "librarian": {
         "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
         "skills": [],
-        "mcps": [
-          "websearch",
-          "context7",
-          "gh_grep"
-        ]
+        "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
         "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
@@ -110,20 +88,13 @@
       "orchestrator": {
         "model": "openrouter/openai/gpt-5.5",
         "variant": "high",
-        "skills": [
-          "*"
-        ],
-        "mcps": [
-          "*",
-          "!context7"
-        ]
+        "skills": ["*"],
+        "mcps": ["*", "!context7"]
       },
       "oracle": {
         "model": "openrouter/anthropic/claude-opus-4.8",
         "variant": "xhigh",
-        "skills": [
-          "simplify"
-        ],
+        "skills": ["simplify"],
         "mcps": []
       },
       "council": {
@@ -135,11 +106,7 @@
       "librarian": {
         "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
         "skills": [],
-        "mcps": [
-          "websearch",
-          "context7",
-          "gh_grep"
-        ]
+        "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
         "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
@@ -162,20 +129,13 @@
       "orchestrator": {
         "model": "openrouter/openai/gpt-5.5",
         "variant": "xhigh",
-        "skills": [
-          "*"
-        ],
-        "mcps": [
-          "*",
-          "!context7"
-        ]
+        "skills": ["*"],
+        "mcps": ["*", "!context7"]
       },
       "oracle": {
         "model": "openrouter/anthropic/claude-opus-4.8",
         "variant": "xhigh",
-        "skills": [
-          "simplify"
-        ],
+        "skills": ["simplify"],
         "mcps": []
       },
       "council": {
@@ -187,11 +147,7 @@
       "librarian": {
         "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
         "skills": [],
-        "mcps": [
-          "websearch",
-          "context7",
-          "gh_grep"
-        ]
+        "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
         "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
@@ -213,20 +169,13 @@
     "orchestrator-glm52": {
       "orchestrator": {
         "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
-        "skills": [
-          "*"
-        ],
-        "mcps": [
-          "*",
-          "!context7"
-        ]
+        "skills": ["*"],
+        "mcps": ["*", "!context7"]
       },
       "oracle": {
         "model": "openrouter/anthropic/claude-opus-4.8",
         "variant": "xhigh",
-        "skills": [
-          "simplify"
-        ],
+        "skills": ["simplify"],
         "mcps": []
       },
       "council": {
@@ -238,11 +187,7 @@
       "librarian": {
         "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
         "skills": [],
-        "mcps": [
-          "websearch",
-          "context7",
-          "gh_grep"
-        ]
+        "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
         "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
@@ -262,86 +207,52 @@
       }
     }
   },
-  "disabled_agents": [
-    "observer"
-  ],
+  "disabled_agents": ["observer"],
   "agents": {
     "orchestrator-gpt55-medium": {
       "orchestrator_class": true,
       "model": "openrouter/openai/gpt-5.5",
       "variant": "medium",
-      "skills": [
-        "*"
-      ],
-      "mcps": [
-        "*",
-        "!context7"
-      ]
+      "skills": ["*"],
+      "mcps": ["*", "!context7"]
     },
     "orchestrator-gpt55-high": {
       "orchestrator_class": true,
       "model": "openrouter/openai/gpt-5.5",
       "variant": "high",
-      "skills": [
-        "*"
-      ],
-      "mcps": [
-        "*",
-        "!context7"
-      ]
+      "skills": ["*"],
+      "mcps": ["*", "!context7"]
     },
     "orchestrator-gpt55-xhigh": {
       "orchestrator_class": true,
       "model": "openrouter/openai/gpt-5.5",
       "variant": "xhigh",
-      "skills": [
-        "*"
-      ],
-      "mcps": [
-        "*",
-        "!context7"
-      ]
+      "skills": ["*"],
+      "mcps": ["*", "!context7"]
     },
     "orchestrator-deepseek-high": {
       "orchestrator_class": true,
       "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-pro",
       "variant": "high",
-      "skills": [
-        "*"
-      ],
-      "mcps": [
-        "*",
-        "!context7"
-      ]
+      "skills": ["*"],
+      "mcps": ["*", "!context7"]
     },
     "orchestrator-glm52": {
       "orchestrator_class": true,
       "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
-      "skills": [
-        "*"
-      ],
-      "mcps": [
-        "*",
-        "!context7"
-      ]
+      "skills": ["*"],
+      "mcps": ["*", "!context7"]
     },
     "orchestrator-glm52-sol": {
       "orchestrator_class": true,
       "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
-      "skills": [
-        "*"
-      ],
-      "mcps": [
-        "*",
-        "!context7"
-      ],
+      "skills": ["*"],
+      "mcps": ["*", "!context7"],
       "specialists": {
         "oracle": {
           "model": "openrouter/openai/gpt-5.6-sol",
           "variant": "high",
-          "skills": [
-            "simplify"
-          ],
+          "skills": ["simplify"],
           "mcps": []
         }
       }

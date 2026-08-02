@@ -23,9 +23,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PluginInput } from '@opencode-ai/plugin';
 import {
-  type PromptBody,
   extractSessionResult,
   log,
+  type PromptBody,
   parseModelReference,
   parseTaskLaunchOutput,
   parseTaskStatusOutput,
@@ -179,10 +179,7 @@ export function createFixerReviewHook(
   ): string {
     const fileList = diff.changedFiles
       .slice(0, DEFAULT_MAX_DIFF_FILES_TO_LIST)
-      .map(
-        (f) =>
-          `  ${f.file} (+${f.added} -${f.deleted})`,
-      )
+      .map((f) => `  ${f.file} (+${f.added} -${f.deleted})`)
       .join('\n');
 
     const truncated =

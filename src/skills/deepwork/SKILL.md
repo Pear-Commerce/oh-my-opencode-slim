@@ -109,3 +109,29 @@ Use the scheduler model throughout:
   work remains, stop briefly and let the completion event resume the workflow;
 - do not advance to the next phase while relevant jobs are running or terminal
   results are unreconciled.
+
+## Automatic Context Compaction
+
+When the orchestrator's input token count exceeds 400k, the plugin
+automatically triggers a compact cycle to preserve context across compaction:
+
+1. **Write phase** — the orchestrator is prompted to write everything it
+   needs to preserve to its deepwork progress file (goal, plan, phase
+   status, file references, research findings, blockers, background job
+   state).
+2. **Compact phase** — once the orchestrator finishes writing and goes
+   idle, compaction is triggered automatically via `session.compact`.
+   The compaction prompt is augmented with a reminder to preserve
+   deepwork file references in the summary.
+3. **Refresh phase** — after compaction completes, the orchestrator is
+   prompted to re-read its deepwork progress file and continue exactly
+   where it left off.
+
+The orchestrator does not need to manage this cycle manually — the hook
+handles detection, prompting, and compaction triggering. The orchestrator
+just needs to:
+
+- write comprehensive context to the deepwork file when prompted;
+- read the deepwork file and resume work when prompted after compaction.
+
+A 60-second cooldown prevents re-triggering immediately after a cycle.

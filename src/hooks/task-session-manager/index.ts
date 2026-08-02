@@ -538,11 +538,14 @@ export function createTaskSessionManagerHook(
       }
 
       const requested = args.task_id.trim();
-      log('[task-session-manager] task call with task_id, attempting resolveReusable', {
-        sessionID: input.sessionID,
-        agentType: args.subagent_type,
-        requestedTaskId: requested,
-      });
+      log(
+        '[task-session-manager] task call with task_id, attempting resolveReusable',
+        {
+          sessionID: input.sessionID,
+          agentType: args.subagent_type,
+          requestedTaskId: requested,
+        },
+      );
 
       const remembered = backgroundJobBoard.resolveReusable(
         input.sessionID,
@@ -555,7 +558,13 @@ export function createTaskSessionManagerHook(
           sessionID: input.sessionID,
           requestedTaskId: requested,
           isRawSessionId: RAW_SESSION_ID_PATTERN.test(requested),
-          jobsOnBoard: backgroundJobBoard.list(input.sessionID).map(j => ({ taskID: j.taskID, alias: j.alias, agent: j.agent, state: j.state, terminalUnreconciled: j.terminalUnreconciled })),
+          jobsOnBoard: backgroundJobBoard.list(input.sessionID).map((j) => ({
+            taskID: j.taskID,
+            alias: j.alias,
+            agent: j.agent,
+            state: j.state,
+            terminalUnreconciled: j.terminalUnreconciled,
+          })),
         });
         if (RAW_SESSION_ID_PATTERN.test(requested)) {
           pendingCall.resumedTaskId = requested;
@@ -563,10 +572,13 @@ export function createTaskSessionManagerHook(
           return;
         }
         delete args.task_id;
-        log('[task-session-manager] deleted task_id (alias not found, not raw session ID)', {
-          sessionID: input.sessionID,
-          requestedTaskId: requested,
-        });
+        log(
+          '[task-session-manager] deleted task_id (alias not found, not raw session ID)',
+          {
+            sessionID: input.sessionID,
+            requestedTaskId: requested,
+          },
+        );
         return;
       }
 
