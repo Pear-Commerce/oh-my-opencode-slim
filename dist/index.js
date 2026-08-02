@@ -25395,9 +25395,6 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
           state.lastCompactAt = Date.now();
         }
         if (state.compactCycle === "compacting") {
-          log("[deepwork-wakeup] orchestrator idle during compacting without session.compacted, resetting", {
-            sessionId
-          });
           state.compactCycle = "normal";
           state.lastCompactAt = Date.now();
         }

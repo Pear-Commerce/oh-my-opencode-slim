@@ -1958,17 +1958,18 @@ export function createDeepworkWakeupHook(
           // Fall through to normal idle handling — the orchestrator may
           // have more work to do after refreshing its context.
         }
-        // Suppress done-check/gate while compaction is in progress.
-        // But if the orchestrator went idle without a session.compacted
-        // event, the auto-compact didn't fire (context wasn't over the
-        // model's limit). Reset to normal so the cycle can retry later.
+        // If compactCycle is 'compacting', the tui.executeCommand was
+        // sent but compaction may not have fired (TUI command doesn't
+        // work for programmatic compaction). Reset to normal but keep
+        // deepworkFileWritten=true so when auto-compact fires naturally
+        // (context overflow during next agent loop), the session.compacted
+        // handler sends the refresh prompt.
         if (state.compactCycle === 'compacting') {
-          log('[deepwork-wakeup] orchestrator idle during compacting without session.compacted, resetting', {
-            sessionId,
-          });
           state.compactCycle = 'normal';
           state.lastCompactAt = Date.now();
-          // Fall through to normal idle handling
+          // deepworkFileWritten stays true — session.compacted handler
+          // will send the refresh prompt when auto-compact fires.
+          // Fall through to normal idle handling.
         }
 
         // If this is the first time we've seen this session (after a
