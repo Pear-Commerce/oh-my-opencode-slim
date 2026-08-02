@@ -24357,7 +24357,6 @@ var DEFAULT_GATE_TIMEOUT_MS = 600000;
 var GATE_FAIL_COOLDOWN_MS = 120000;
 var DEFAULT_CONTEXT_THRESHOLD = 400000;
 var DEFAULT_COMPACT_COOLDOWN_MS = 60000;
-var COMPACT_FALLBACK_TIMEOUT_MS = 30000;
 var GATE_DIR_NAME = ".slim/deepwork/gates";
 var CONSULTATION_DIR_NAME = ".slim/deepwork/consultations";
 function persistGate(directory, sessionID, gate) {
@@ -24478,10 +24477,14 @@ var COMPACT_REFRESH_MESSAGE = [
 ].join(`
 `);
 var COMPACT_MANUAL_MESSAGE = [
-  "Automatic compaction could not be triggered. Your context is very large",
-  "and needs to be compacted. Please ask the user to run `/compact` manually",
-  "in the TUI. After compaction completes, read your deepwork progress file",
-  "under `.slim/deepwork/` and continue exactly where you left off."
+  "Automatic compaction could not be triggered (the session.command API",
+  "did not complete). Your deepwork progress file has been written to",
+  "`.slim/deepwork/`. If your context becomes too large, ask the user to",
+  "run `/compact` manually. After compaction, read your deepwork file and",
+  "continue where you left off.",
+  "",
+  "For now, continue your work — the deepwork file is saved as a recovery",
+  "checkpoint."
 ].join(`
 `);
 function createDeepworkWakeupHook(client, options) {
@@ -24501,6 +24504,7 @@ function createDeepworkWakeupHook(client, options) {
   const periodicDoneCheck = options.periodicDoneCheck ?? true;
   const contextThreshold = options.contextThreshold ?? DEFAULT_CONTEXT_THRESHOLD;
   const compactCooldownMs = options.compactCooldownMs ?? DEFAULT_COMPACT_COOLDOWN_MS;
+  const serverUrl = options.serverUrl;
   const states = new Map;
   const hasHadBackgroundWork = new Set;
   const timers = new Map;
@@ -24660,94 +24664,49 @@ function createDeepworkWakeupHook(client, options) {
   }
   async function triggerCompaction(sessionID) {
     try {
-      const sessionClient = client.session;
-      const model = await resolveModel?.(sessionID);
-      if (typeof sessionClient.command === "function") {
-        const existingTimer = compactFallbackTimers.get(sessionID);
-        if (existingTimer)
-          clearTimeout(existingTimer);
-        compactFallbackTimers.set(sessionID, setTimeout(() => {
-          const state2 = getState(sessionID);
-          if (state2.compactCycle !== "compacting")
-            return;
-          log("[deepwork-wakeup] session.compacted not received within 30s, asking user to compact manually", { sessionID });
-          state2.compactCycle = "normal";
-          state2.lastCompactAt = Date.now();
-          sendPrompt(sessionID, COMPACT_MANUAL_MESSAGE, "compact-manual").catch(() => {});
-        }, COMPACT_FALLBACK_TIMEOUT_MS));
-        sessionClient.command({
-          path: { id: sessionID },
-          body: {
-            command: "session.compact",
-            arguments: "",
-            ...model?.agent ? { agent: model.agent } : {},
-            ...model ? {
-              model: `${model.providerID}/${model.modelID}`
-            } : {}
-          }
-        }).then(() => {
-          log("[deepwork-wakeup] compaction triggered via session.command", {
-            sessionID
-          });
-        }).catch(async (err) => {
-          log("[deepwork-wakeup] session.command failed, asking user to compact manually", {
-            sessionID,
-            error: err instanceof Error ? err.message : String(err)
-          });
-          const timer = compactFallbackTimers.get(sessionID);
-          if (timer) {
-            clearTimeout(timer);
-            compactFallbackTimers.delete(sessionID);
-          }
-          const state2 = getState(sessionID);
-          state2.compactCycle = "normal";
-          state2.lastCompactAt = Date.now();
-          await sendPrompt(sessionID, COMPACT_MANUAL_MESSAGE, "compact-manual");
-        });
-        return;
-      }
-      if (typeof sessionClient.promptAsync === "function") {
-        await triggerCompactionViaPrompt(sessionID, sessionClient, model);
-        return;
-      }
-      log("[deepwork-wakeup] no session.command or promptAsync available, cannot trigger compaction", { sessionID });
-      const state = getState(sessionID);
-      state.compactCycle = "normal";
-      state.lastCompactAt = Date.now();
-    } catch (err) {
-      log("[deepwork-wakeup] failed to trigger compaction", {
-        sessionID,
-        error: err instanceof Error ? err.message : String(err)
-      });
-      const state = getState(sessionID);
-      state.compactCycle = "normal";
-      state.lastCompactAt = Date.now();
-    }
-  }
-  async function triggerCompactionViaPrompt(sessionID, sessionClient, model) {
-    try {
-      if (typeof sessionClient.promptAsync !== "function") {
-        log("[deepwork-wakeup] promptAsync unavailable for compaction fallback", { sessionID });
+      if (!serverUrl) {
+        log("[deepwork-wakeup] no serverUrl available, cannot trigger compaction", { sessionID });
         const state = getState(sessionID);
         state.compactCycle = "normal";
         state.lastCompactAt = Date.now();
         return;
       }
-      await sessionClient.promptAsync({
-        path: { id: sessionID },
-        body: {
-          parts: [{ type: "text", text: "/compact" }],
-          ...model ? {
-            model,
-            ...model.agent ? { agent: model.agent } : {}
-          } : {}
-        }
+      const base = serverUrl.replace(/\/$/, "");
+      const url = `${base}/api/session/${sessionID}/compact`;
+      log("[deepwork-wakeup] triggering compaction via REST API", {
+        sessionID,
+        url
       });
-      log("[deepwork-wakeup] compaction triggered via promptAsync /compact", {
-        sessionID
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      }).then(async (resp) => {
+        if (!resp.ok) {
+          const body = await resp.text().catch(() => "");
+          log("[deepwork-wakeup] compaction REST API returned error", {
+            sessionID,
+            status: resp.status,
+            body: body.slice(0, 200)
+          });
+          const state = getState(sessionID);
+          state.compactCycle = "normal";
+          state.lastCompactAt = Date.now();
+        } else {
+          log("[deepwork-wakeup] compaction triggered via REST API", {
+            sessionID
+          });
+        }
+      }).catch((err) => {
+        log("[deepwork-wakeup] compaction REST API fetch failed", {
+          sessionID,
+          error: err instanceof Error ? err.message : String(err)
+        });
+        const state = getState(sessionID);
+        state.compactCycle = "normal";
+        state.lastCompactAt = Date.now();
       });
     } catch (err) {
-      log("[deepwork-wakeup] promptAsync /compact fallback also failed", {
+      log("[deepwork-wakeup] failed to trigger compaction", {
         sessionID,
         error: err instanceof Error ? err.message : String(err)
       });
@@ -36639,6 +36598,7 @@ var OhMyOpenCodeLite = async (ctx) => {
       backgroundJobBoard,
       shouldManageSession: (sessionID) => isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
       directory: ctx.directory,
+      serverUrl: ctx.serverUrl?.toString(),
       periodicDoneCheck: false,
       resolveModel: async (sessionID) => {
         let agentName = sessionAgentMap.get(sessionID);

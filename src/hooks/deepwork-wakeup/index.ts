@@ -220,10 +220,14 @@ const COMPACT_REFRESH_MESSAGE = [
 ].join('\n');
 
 const COMPACT_MANUAL_MESSAGE = [
-  'Automatic compaction could not be triggered. Your context is very large',
-  'and needs to be compacted. Please ask the user to run `/compact` manually',
-  'in the TUI. After compaction completes, read your deepwork progress file',
-  'under `.slim/deepwork/` and continue exactly where you left off.',
+  'Automatic compaction could not be triggered (the session.command API',
+  'did not complete). Your deepwork progress file has been written to',
+  '`.slim/deepwork/`. If your context becomes too large, ask the user to',
+  'run `/compact` manually. After compaction, read your deepwork file and',
+  'continue where you left off.',
+  '',
+  'For now, continue your work — the deepwork file is saved as a recovery',
+  'checkpoint.',
 ].join('\n');
 
 /**
@@ -441,6 +445,11 @@ export interface DeepworkWakeupOptions {
    * immediately after a cycle completes. Defaults to 60_000 (1 min).
    */
   compactCooldownMs?: number;
+  /**
+   * The OpenCode server URL (from PluginInput.serverUrl). Used to call
+   * the REST API directly for compaction: POST /api/session/:id/compact
+   */
+  serverUrl?: string;
 }
 
 export function createDeepworkWakeupHook(
@@ -466,6 +475,7 @@ export function createDeepworkWakeupHook(
     options.contextThreshold ?? DEFAULT_CONTEXT_THRESHOLD;
   const compactCooldownMs =
     options.compactCooldownMs ?? DEFAULT_COMPACT_COOLDOWN_MS;
+  const serverUrl = options.serverUrl;
 
   const states = new Map<string, SessionWakeState>();
   const hasHadBackgroundWork = new Set<string>();
@@ -722,168 +732,22 @@ export function createDeepworkWakeupHook(
   /**
    * Trigger session compaction via the OpenCode session.command API.
    *
-   * Fires `session.compact` as a TUI command. This is fire-and-forget —
-   * compaction is an LLM call that takes 30+ seconds. The
-   * `session.compacted` event will fire when it's done, and the event
-   * handler sends the refresh prompt at that point.
+   * Calls the OpenCode REST API directly:
+   * POST /api/session/:sessionID/compact
+   *
+   * The session.command API is broken (returns 200 but fails server-side
+   * with UnknownError). The v1 SDK doesn't expose the compact endpoint.
+   * But the REST endpoint exists in the OpenCode server and works.
+   *
+   * This is fire-and-forget — compaction is an LLM call that takes 30+
+   * seconds. The `session.compacted` event fires when done, and the
+   * event handler sends the refresh prompt at that point.
    */
   async function triggerCompaction(sessionID: string): Promise<void> {
     try {
-      const sessionClient = client.session as unknown as {
-        command?: (args: {
-          path: { id: string };
-          body: {
-            command: string;
-            arguments: string;
-            agent?: string;
-            model?: string;
-          };
-        }) => Promise<unknown>;
-        promptAsync?: (args: {
-          path: { id: string };
-          body: {
-            parts: Array<{ type: 'text'; text: string }>;
-            model?: { providerID: string; modelID: string };
-            agent?: string;
-          };
-        }) => Promise<unknown>;
-      };
-
-      // Resolve the session's model/agent so the command API knows which
-      // agent context to compact. Without this, agent=undefined causes
-      // an UnknownError on the server side.
-      const model = await resolveModel?.(sessionID);
-
-      // Try the session.command API first (the proper way to trigger
-      // compaction programmatically). But set a fallback timer — if
-      // session.compacted doesn't fire within 30s, the command was
-      // silently swallowed (happens with very large sessions), so fall
-      // back to sending /compact via promptAsync.
-      if (typeof sessionClient.command === 'function') {
-        // Clear any existing fallback timer
-        const existingTimer = compactFallbackTimers.get(sessionID);
-        if (existingTimer) clearTimeout(existingTimer);
-
-        // Set fallback timer — if session.compacted doesn't fire within
-        // 30s, the session.command API silently swallowed the command
-        // (happens with very large sessions). promptAsync with /compact
-        // doesn't work either — it sends as a regular message, not a
-        // command. So we tell the orchestrator to ask the user to run
-        // /compact manually.
-        compactFallbackTimers.set(
-          sessionID,
-          setTimeout(() => {
-            const state = getState(sessionID);
-            if (state.compactCycle !== 'compacting') return; // already handled
-            log(
-              '[deepwork-wakeup] session.compacted not received within 30s, asking user to compact manually',
-              { sessionID },
-            );
-            state.compactCycle = 'normal';
-            state.lastCompactAt = Date.now();
-            sendPrompt(
-              sessionID,
-              COMPACT_MANUAL_MESSAGE,
-              'compact-manual',
-            ).catch(() => {});
-          }, COMPACT_FALLBACK_TIMEOUT_MS),
-        );
-
-        sessionClient
-          .command({
-            path: { id: sessionID },
-            body: {
-              command: 'session.compact',
-              arguments: '',
-              ...(model?.agent ? { agent: model.agent } : {}),
-              ...(model
-                ? {
-                    model: `${model.providerID}/${model.modelID}`,
-                  }
-                : {}),
-            },
-          })
-          .then(() => {
-            log('[deepwork-wakeup] compaction triggered via session.command', {
-              sessionID,
-            });
-          })
-          .catch(async (err) => {
-            log(
-              '[deepwork-wakeup] session.command failed, asking user to compact manually',
-              {
-                sessionID,
-                error: err instanceof Error ? err.message : String(err),
-              },
-            );
-            // Clear the fallback timer — we're handling now
-            const timer = compactFallbackTimers.get(sessionID);
-            if (timer) {
-              clearTimeout(timer);
-              compactFallbackTimers.delete(sessionID);
-            }
-            const state = getState(sessionID);
-            state.compactCycle = 'normal';
-            state.lastCompactAt = Date.now();
-            await sendPrompt(
-              sessionID,
-              COMPACT_MANUAL_MESSAGE,
-              'compact-manual',
-            );
-          });
-        return;
-      }
-
-      // No session.command API — use promptAsync fallback directly
-      if (typeof sessionClient.promptAsync === 'function') {
-        await triggerCompactionViaPrompt(sessionID, sessionClient, model);
-        return;
-      }
-
-      log(
-        '[deepwork-wakeup] no session.command or promptAsync available, cannot trigger compaction',
-        { sessionID },
-      );
-      // Reset the cycle so the orchestrator isn't stuck in 'compacting'
-      const state = getState(sessionID);
-      state.compactCycle = 'normal';
-      state.lastCompactAt = Date.now();
-    } catch (err) {
-      log('[deepwork-wakeup] failed to trigger compaction', {
-        sessionID,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      const state = getState(sessionID);
-      state.compactCycle = 'normal';
-      state.lastCompactAt = Date.now();
-    }
-  }
-
-  /**
-   * Fallback: trigger compaction by sending "/compact" as a promptAsync
-   * message. The orchestrator will execute the /compact slash command
-   * itself, which triggers the same compaction flow.
-   */
-  async function triggerCompactionViaPrompt(
-    sessionID: string,
-    sessionClient: {
-      promptAsync?: (args: {
-        path: { id: string };
-        body: {
-          parts: Array<{ type: 'text'; text: string }>;
-          model?: { providerID: string; modelID: string };
-          agent?: string;
-        };
-      }) => Promise<unknown>;
-    },
-    model:
-      | { providerID: string; modelID: string; agent?: string }
-      | undefined,
-  ): Promise<void> {
-    try {
-      if (typeof sessionClient.promptAsync !== 'function') {
+      if (!serverUrl) {
         log(
-          '[deepwork-wakeup] promptAsync unavailable for compaction fallback',
+          '[deepwork-wakeup] no serverUrl available, cannot trigger compaction',
           { sessionID },
         );
         const state = getState(sessionID);
@@ -892,27 +756,53 @@ export function createDeepworkWakeupHook(
         return;
       }
 
-      await sessionClient.promptAsync({
-        path: { id: sessionID },
-        body: {
-          parts: [{ type: 'text', text: '/compact' }],
-          ...(model
-            ? {
-                model,
-                ...(model.agent ? { agent: model.agent } : {}),
-              }
-            : {}),
-        },
-      });
-      log('[deepwork-wakeup] compaction triggered via promptAsync /compact', {
+      // Build the REST URL: POST /api/session/:sessionID/compact
+      const base = serverUrl.replace(/\/$/, '');
+      const url = `${base}/api/session/${sessionID}/compact`;
+
+      log('[deepwork-wakeup] triggering compaction via REST API', {
         sessionID,
+        url,
       });
+
+      // Fire-and-forget with a 2-minute timeout. The session.compacted
+      // event handler picks up from here when compaction completes.
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+        .then(async (resp) => {
+          if (!resp.ok) {
+            const body = await resp.text().catch(() => '');
+            log('[deepwork-wakeup] compaction REST API returned error', {
+              sessionID,
+              status: resp.status,
+              body: body.slice(0, 200),
+            });
+            // Reset so the cycle can retry later
+            const state = getState(sessionID);
+            state.compactCycle = 'normal';
+            state.lastCompactAt = Date.now();
+          } else {
+            log('[deepwork-wakeup] compaction triggered via REST API', {
+              sessionID,
+            });
+          }
+        })
+        .catch((err) => {
+          log('[deepwork-wakeup] compaction REST API fetch failed', {
+            sessionID,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          const state = getState(sessionID);
+          state.compactCycle = 'normal';
+          state.lastCompactAt = Date.now();
+        });
     } catch (err) {
-      log('[deepwork-wakeup] promptAsync /compact fallback also failed', {
+      log('[deepwork-wakeup] failed to trigger compaction', {
         sessionID,
         error: err instanceof Error ? err.message : String(err),
       });
-      // Reset on failure so the cycle can retry later
       const state = getState(sessionID);
       state.compactCycle = 'normal';
       state.lastCompactAt = Date.now();

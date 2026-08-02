@@ -345,6 +345,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       shouldManageSession: (sessionID) =>
         isOrchestratorClassAgent(config, sessionAgentMap.get(sessionID)),
       directory: ctx.directory,
+      serverUrl: ctx.serverUrl?.toString(),
       // Disable the periodic done-check. After a manual abort, OpenCode emits
       // only session.idle (no abort event), so the hook cannot tell "stopped
       // by user" from "finished a turn" and the 5s poll re-executes the thread

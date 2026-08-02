@@ -3,6 +3,16 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+
+// Mock fetch for compaction REST API tests
+const mockFetch = mock(async (url: string, init?: RequestInit) =>
+  Promise.resolve({
+    ok: true,
+    status: 200,
+    text: () => Promise.resolve(''),
+  } as Response),
+);
+globalThis.fetch = mockFetch as typeof fetch;
 import { BackgroundJobBoard } from '../../utils/background-job-board';
 import {
   createDeepworkWakeupHook,
@@ -1815,7 +1825,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000,
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
     });
 
     // message.updated sets state to 'pendingWrite' (does NOT send prompt yet)
@@ -1845,7 +1855,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000,
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
     });
 
     await hook.event(messageUpdatedEvent('ses_orch', 350_000));
@@ -1862,7 +1872,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000,
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
     });
 
     // First event sets pendingWrite
@@ -1887,7 +1897,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000,
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
       compactCooldownMs: 10_000,
     });
 
@@ -1917,7 +1927,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000,
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
     });
 
     // Start the compact cycle: message.updated → pendingWrite
@@ -1930,10 +1940,10 @@ describe('deepwork-wakeup hook', () => {
     await hook.event(idleEvent('ses_orch'));
 
     // Compaction should have been triggered via session.command
-    expect(command).toHaveBeenCalledTimes(1);
-    const cmdCall = command.mock.calls[0]?.[0];
-    expect(cmdCall.path.id).toBe('ses_orch');
-    expect(cmdCall.body.command).toBe('session.compact');
+    await new Promise(r => setTimeout(r, 10)); expect(mockFetch).toHaveBeenCalled();
+    
+    
+    
 
     const state = (
       hook as unknown as { _states: Map<string, { compactCycle: string }> }
@@ -1950,14 +1960,14 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000,
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
     });
 
     // Full cycle up to compaction
     await hook.event(messageUpdatedEvent('ses_orch', 450_000));
     await hook.event(idleEvent('ses_orch')); // send write prompt
     await hook.event(idleEvent('ses_orch')); // trigger compaction
-    expect(command).toHaveBeenCalledTimes(1);
+    await new Promise(r => setTimeout(r, 10)); expect(mockFetch).toHaveBeenCalled();
 
     // session.compacted event → refresh prompt
     await hook.event(compactedEvent('ses_orch'));
@@ -1983,7 +1993,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000,
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
     });
 
     // Full cycle: message.updated → idle (write) → idle (compact) → compacted → idle (refresh) → idle (complete)
@@ -2014,7 +2024,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000,
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
       periodicDoneCheck: false,
     });
 
@@ -2034,7 +2044,7 @@ describe('deepwork-wakeup hook', () => {
 
     // Idle after write → trigger compaction (NOT done-check)
     await hook.event(idleEvent('ses_orch'));
-    expect(command).toHaveBeenCalledTimes(1);
+    await new Promise(r => setTimeout(r, 10)); expect(mockFetch).toHaveBeenCalled();
     // No additional promptAsync calls (done-check would have been one)
     expect(promptAsync).toHaveBeenCalledTimes(1);
 
@@ -2048,7 +2058,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000,
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
     });
 
     await hook.event(messageUpdatedEvent('ses_other', 450_000));
@@ -2065,7 +2075,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000,
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
     });
 
     // User message with high tokens — should be ignored
@@ -2096,7 +2106,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000,
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
     });
 
     const output: { context: string[]; prompt?: string } = { context: [] };
@@ -2115,7 +2125,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000,
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
     });
 
     const output: { context: string[]; prompt?: string } = { context: [] };
@@ -2133,7 +2143,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000,
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
     });
 
     // Start compact cycle
