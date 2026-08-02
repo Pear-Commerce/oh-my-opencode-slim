@@ -24673,25 +24673,30 @@ function createDeepworkWakeupHook(client, options) {
       }
       const base = serverUrl.replace(/\/$/, "");
       const url = `${base}/api/session/${sessionID}/compact`;
-      let authHeaders = {};
+      let sdkFetch;
+      let sdkHeaders = {};
       try {
         const rawClient = client._client;
-        if (rawClient?.config?.headers) {
-          authHeaders = rawClient.config.headers;
+        if (rawClient) {
+          const config = rawClient.getConfig?.() ?? rawClient.config;
+          sdkFetch = config?.fetch;
+          sdkHeaders = config?.headers ?? {};
         }
       } catch {}
+      const fetchFn = sdkFetch ?? globalThis.fetch;
       log("[deepwork-wakeup] triggering compaction via REST API", {
         sessionID,
         url,
-        hasAuth: Boolean(authHeaders.Authorization || authHeaders.authorization)
+        hasSdkFetch: Boolean(sdkFetch),
+        headerKeys: Object.keys(sdkHeaders)
       });
       const controller = new AbortController;
       const timeout = setTimeout(() => controller.abort(), 120000);
-      fetch(url, {
+      fetchFn(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...authHeaders
+          ...sdkHeaders
         },
         signal: controller.signal
       }).then(async (resp) => {

@@ -759,36 +759,47 @@ export function createDeepworkWakeupHook(
       const base = serverUrl.replace(/\/$/, '');
       const url = `${base}/api/session/${sessionID}/compact`;
 
-      // Get auth headers from the SDK client's internal client.
-      // The SDK client (input.client) wraps a lower-level HTTP client
-      // that has Authorization headers configured. We extract those
-      // headers and use them with our own fetch call.
+      // Get the SDK client's internal fetch and config which already
+      // has the right baseUrl, headers, and auth configured. The SDK
+      // client (input.client) wraps a lower-level HTTP client that
+      // works without explicit auth (it's running in-process).
       // Same approach as magic-compact: input.client["_client"]
-      let authHeaders: Record<string, string> = {};
+      let sdkFetch: typeof fetch | undefined;
+      let sdkHeaders: Record<string, string> = {};
       try {
-        const rawClient = (client as unknown as { _client?: { config?: { headers?: Record<string, string> } } })._client;
-        if (rawClient?.config?.headers) {
-          authHeaders = rawClient.config.headers;
+        const rawClient = (client as unknown as {
+          _client?: {
+            getConfig?: () => { fetch?: typeof fetch; headers?: Record<string, string> };
+            config?: { fetch?: typeof fetch; headers?: Record<string, string> };
+          };
+        })._client;
+        if (rawClient) {
+          const config = rawClient.getConfig?.() ?? rawClient.config;
+          sdkFetch = config?.fetch;
+          sdkHeaders = config?.headers ?? {};
         }
       } catch {
         // _client structure may vary across SDK versions — try best effort
       }
 
+      const fetchFn = sdkFetch ?? globalThis.fetch;
+
       log('[deepwork-wakeup] triggering compaction via REST API', {
         sessionID,
         url,
-        hasAuth: Boolean(authHeaders.Authorization || authHeaders.authorization),
+        hasSdkFetch: Boolean(sdkFetch),
+        headerKeys: Object.keys(sdkHeaders),
       });
 
       // Fire-and-forget with a 2-minute timeout. The session.compacted
       // event handler picks up from here when compaction completes.
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 120_000);
-      fetch(url, {
+      fetchFn(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...authHeaders,
+          ...sdkHeaders,
         },
         signal: controller.signal,
       })
