@@ -1565,6 +1565,11 @@ export function createDeepworkWakeupHook(
     if (Date.now() - state.lastCompactAt < compactCooldownMs) return;
 
     try {
+      log('[deepwork-wakeup] checking context threshold on idle', {
+        sessionID,
+        compactCycle: state.compactCycle,
+        lastCompactAt: state.lastCompactAt,
+      });
       const MESSAGE_READ_TIMEOUT_MS = 10_000;
       const result = await Promise.race([
         client.session.messages({ path: { id: sessionID } }),
@@ -1582,6 +1587,12 @@ export function createDeepworkWakeupHook(
         };
       }>;
 
+      log('[deepwork-wakeup] messages retrieved for token check', {
+        sessionID,
+        messageCount: messages.length,
+        lastRole: messages.length > 0 ? messages[messages.length - 1]?.info?.role : 'none',
+      });
+
       // Find the last assistant message with token data
       const lastAssistant = [...messages]
         .reverse()
@@ -1590,10 +1601,22 @@ export function createDeepworkWakeupHook(
             m.info?.role === 'assistant' &&
             typeof m.info?.tokens?.input === 'number',
         );
-      if (!lastAssistant) return;
+      if (!lastAssistant) {
+        log('[deepwork-wakeup] no assistant message with token data found', {
+          sessionID,
+        });
+        return;
+      }
 
       const inputTokens = lastAssistant.info.tokens!.input!;
       state.lastInputTokens = inputTokens;
+
+      log('[deepwork-wakeup] token check result', {
+        sessionID,
+        inputTokens,
+        threshold: contextThreshold,
+        exceeded: inputTokens >= contextThreshold,
+      });
 
       if (inputTokens >= contextThreshold) {
         log(

@@ -25163,17 +25163,37 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
     if (Date.now() - state.lastCompactAt < compactCooldownMs)
       return;
     try {
+      log("[deepwork-wakeup] checking context threshold on idle", {
+        sessionID,
+        compactCycle: state.compactCycle,
+        lastCompactAt: state.lastCompactAt
+      });
       const MESSAGE_READ_TIMEOUT_MS = 1e4;
       const result = await Promise.race([
         client.session.messages({ path: { id: sessionID } }),
         new Promise((_, reject) => setTimeout(() => reject(new Error("messages timed out")), MESSAGE_READ_TIMEOUT_MS))
       ]);
       const messages = result.data ?? [];
+      log("[deepwork-wakeup] messages retrieved for token check", {
+        sessionID,
+        messageCount: messages.length,
+        lastRole: messages.length > 0 ? messages[messages.length - 1]?.info?.role : "none"
+      });
       const lastAssistant = [...messages].reverse().find((m) => m.info?.role === "assistant" && typeof m.info?.tokens?.input === "number");
-      if (!lastAssistant)
+      if (!lastAssistant) {
+        log("[deepwork-wakeup] no assistant message with token data found", {
+          sessionID
+        });
         return;
+      }
       const inputTokens = lastAssistant.info.tokens.input;
       state.lastInputTokens = inputTokens;
+      log("[deepwork-wakeup] token check result", {
+        sessionID,
+        inputTokens,
+        threshold: contextThreshold,
+        exceeded: inputTokens >= contextThreshold
+      });
       if (inputTokens >= contextThreshold) {
         log("[deepwork-wakeup] context threshold exceeded (idle check), starting compact cycle", {
           sessionID,
