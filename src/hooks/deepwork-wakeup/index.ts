@@ -1816,12 +1816,13 @@ export function createDeepworkWakeupHook(
         // ── Context-compact: check token threshold on idle ────────────
         // message.updated events don't reliably carry token data to plugins,
         // so the primary trigger is checking the last assistant message's
-        // token count when the orchestrator goes idle. Only check for
-        // deepwork sessions (has had background work or has a gate) to
-        // avoid querying messages for every regular chat session.
+        // token count when the orchestrator goes idle. This runs for ALL
+        // managed orchestrator sessions (not just deepwork sessions with
+        // background work) because context size is independent of
+        // background work history. After a restart, hasHadBackgroundWork
+        // is empty, but a session at 800k tokens still needs compaction.
         if (
           state.compactCycle === 'normal' &&
-          (hasHadBackgroundWork.has(sessionId) || state.gate) &&
           !backgroundJobBoard.hasRunning(sessionId) &&
           !backgroundJobBoard.hasTerminalUnreconciled(sessionId) &&
           !state.awaitingDoneCheck &&

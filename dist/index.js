@@ -25301,7 +25301,7 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
       if (shouldManageSession(sessionId)) {
         const state = getState(sessionId);
         state.idle = true;
-        if (state.compactCycle === "normal" && (hasHadBackgroundWork.has(sessionId) || state.gate) && !backgroundJobBoard.hasRunning(sessionId) && !backgroundJobBoard.hasTerminalUnreconciled(sessionId) && !state.awaitingDoneCheck && !state.wakeInFlight) {
+        if (state.compactCycle === "normal" && !backgroundJobBoard.hasRunning(sessionId) && !backgroundJobBoard.hasTerminalUnreconciled(sessionId) && !state.awaitingDoneCheck && !state.wakeInFlight) {
           await checkContextThresholdOnIdle(sessionId);
         }
         if (state.compactCycle === "pendingWrite") {
