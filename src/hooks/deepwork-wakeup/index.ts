@@ -1593,27 +1593,33 @@ export function createDeepworkWakeupHook(
         lastRole: messages.length > 0 ? messages[messages.length - 1]?.info?.role : 'none',
       });
 
-      // Find the last assistant message with token data
-      const lastAssistant = [...messages]
-        .reverse()
-        .find(
-          (m) =>
-            m.info?.role === 'assistant' &&
-            typeof m.info?.tokens?.input === 'number',
-        );
-      if (!lastAssistant) {
-        log('[deepwork-wakeup] no assistant message with token data found', {
-          sessionID,
-        });
-        return;
+      // The UI's "800k tokens" is the cumulative input across all
+      // assistant messages (each LLM call sees the full context). The
+      // per-message tokens.input is just that call's input — typically
+      // much smaller than the running total. Sum all assistant input
+      // tokens to approximate the total context size the orchestrator
+      // is carrying.
+      let totalInputTokens = 0;
+      let lastInputTokens = 0;
+      for (const m of messages) {
+        if (m.info?.role === 'assistant' && typeof m.info?.tokens?.input === 'number') {
+          totalInputTokens += m.info.tokens.input;
+          lastInputTokens = m.info.tokens.input;
+        }
       }
 
-      const inputTokens = lastAssistant.info.tokens!.input!;
+      // Use the last assistant message's input tokens as the context
+      // size indicator — it reflects the full context window at the
+      // most recent LLM call. But also track the cumulative total for
+      // debugging. The last message's input is the most accurate
+      // representation of current context size.
+      const inputTokens = lastInputTokens;
       state.lastInputTokens = inputTokens;
 
       log('[deepwork-wakeup] token check result', {
         sessionID,
         inputTokens,
+        totalInputTokens,
         threshold: contextThreshold,
         exceeded: inputTokens >= contextThreshold,
       });
