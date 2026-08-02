@@ -739,19 +739,20 @@ export function createDeepworkWakeupHook(
   /**
    * Trigger session compaction via the OpenCode session.command API.
    *
-   * Triggers compaction via the v2 SDK's tui.executeCommand API.
+   * Triggers compaction via client.session.summarize().
    *
-   * The v2 session.compact REST endpoint is a stub (always returns
-   * OperationUnavailableError). But the TUI command "session.compact"
-   * triggers the real compaction flow — same as pressing the keybinding
-   * in the TUI.
+   * Despite its name, `summarize` is OpenCode's existing manual-compaction
+   * endpoint. The desktop renderer itself uses it to implement compaction.
+   * It creates a real compaction message and runs the agent loop until
+   * compaction is processed.
    *
-   * We use the v2 SDK client (created from input.client._client, same
-   * approach as magic-compact) to call tui.executeCommand.
+   * The v2 session.compact API is a stub (always returns
+   * OperationUnavailableError). session.command, tui.executeCommand, and
+   * promptAsync('/compact') all don't work for programmatic compaction.
    */
   async function triggerCompaction(sessionID: string): Promise<void> {
     try {
-      log('[deepwork-wakeup] triggering compaction via tui.executeCommand', {
+      log('[deepwork-wakeup] triggering compaction via session.summarize', {
         sessionID,
       });
 
@@ -760,70 +761,90 @@ export function createDeepworkWakeupHook(
       const state = getState(sessionID);
       state.deepworkFileWritten = true;
 
-      // Try the v2 SDK's tui.executeCommand — this executes the TUI
-      // "session.compact" command, which triggers the real compaction.
-      try {
-        // Create a v2 client from the plugin's client (same approach
-        // as magic-compact: input.client["_client"])
-        const rawClient = (client as unknown as { _client?: unknown })._client;
-        if (rawClient) {
-          // Dynamically import the v2 SDK to avoid dependency issues
-          const { OpencodeClient: V2Client } = await import(
-            '@opencode-ai/sdk/v2'
-          );
-          const v2 = new V2Client({ client: rawClient as never });
+      // Resolve the model — use the session's configured model, not the
+      // wakeup model (which is pinned to glm-5p2 and may not have enough
+      // context to summarize a 400k+ token conversation).
+      const model = await resolveModel?.(sessionID);
 
-          const result = await v2.tui.executeCommand({
-            command: 'session.compact',
-          });
-
-          if ('error' in result && result.error) {
-            log('[deepwork-wakeup] tui.executeCommand returned error', {
-              sessionID,
-              error: String(result.error),
-            });
-            // Reset on failure
-            state.compactCycle = 'normal';
-            state.lastCompactAt = Date.now();
-            state.deepworkFileWritten = false;
-            return;
-          }
-
-          log('[deepwork-wakeup] compaction triggered via tui.executeCommand', {
-            sessionID,
-          });
-          return;
-        }
-      } catch (err) {
-        log('[deepwork-wakeup] v2 tui.executeCommand failed', {
+      // Use the session's provider/model for compaction. The summarize
+      // endpoint needs providerID and modelID.
+      if (!model) {
+        log('[deepwork-wakeup] no model resolved for compaction, falling back to continue prompt', {
           sessionID,
-          error: err instanceof Error ? err.message : String(err),
         });
+        state.compactCycle = 'normal';
+        state.lastCompactAt = Date.now();
+        await sendPrompt(
+          sessionID,
+          'Deepwork file saved. Continue your work — the system will automatically compact your context when needed. After any compaction, read your deepwork progress file under `.slim/deepwork/` and continue exactly where you left off.',
+          'compact-continue',
+        );
+        return;
       }
 
-      // Fallback: send a continue prompt. Auto-compact will fire
-      // naturally when the context overflows the model's limit.
-      log('[deepwork-wakeup] falling back to continue prompt', { sessionID });
-      state.compactCycle = 'normal';
-      state.lastCompactAt = Date.now();
-      const sent = await sendPrompt(
+      // Call session.summarize — this is the real compaction endpoint
+      // that the TUI uses internally. It creates a compaction message
+      // and runs the agent loop until compaction is processed.
+      const sessionClient = client.session as unknown as {
+        summarize?: (args: {
+          path: { id: string };
+          query?: { directory?: string };
+          body: {
+            providerID?: string;
+            modelID?: string;
+            auto?: boolean;
+          };
+        }) => Promise<{ data?: unknown; error?: unknown }>;
+      };
+
+      if (typeof sessionClient.summarize !== 'function') {
+        log('[deepwork-wakeup] session.summarize unavailable, falling back to continue prompt', {
+          sessionID,
+        });
+        state.compactCycle = 'normal';
+        state.lastCompactAt = Date.now();
+        await sendPrompt(
+          sessionID,
+          'Deepwork file saved. Continue your work — the system will automatically compact your context when needed. After any compaction, read your deepwork progress file under `.slim/deepwork/` and continue exactly where you left off.',
+          'compact-continue',
+        );
+        return;
+      }
+
+      const result = await sessionClient.summarize({
+        path: { id: sessionID },
+        body: {
+          providerID: model.providerID,
+          modelID: model.modelID,
+          auto: false,
+        },
+      });
+
+      if (result.error) {
+        log('[deepwork-wakeup] session.summarize returned error', {
+          sessionID,
+          error: String(result.error),
+        });
+        state.compactCycle = 'normal';
+        state.lastCompactAt = Date.now();
+        // Don't clear deepworkFileWritten — auto-compact may still fire
+        return;
+      }
+
+      log('[deepwork-wakeup] compaction triggered via session.summarize', {
         sessionID,
-        'Deepwork file saved. Continue your work — the system will automatically compact your context when needed. After any compaction, read your deepwork progress file under `.slim/deepwork/` and continue exactly where you left off.',
-        'compact-continue',
-      );
-      if (!sent) {
-        log('[deepwork-wakeup] failed to send compact-continue prompt', {
-          sessionID,
-        });
-      }
+      });
+      // session.compacted event will fire when compaction completes.
+      // The event handler sends the refresh prompt.
     } catch (err) {
-      log('[deepwork-wakeup] failed to trigger compaction', {
+      log('[deepwork-wakeup] failed to trigger compaction via session.summarize', {
         sessionID,
         error: err instanceof Error ? err.message : String(err),
       });
       const state = getState(sessionID);
       state.compactCycle = 'normal';
       state.lastCompactAt = Date.now();
+      // Don't clear deepworkFileWritten — auto-compact may still fire
     }
   }
 

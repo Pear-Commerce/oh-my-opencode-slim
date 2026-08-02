@@ -24665,51 +24665,53 @@ function createDeepworkWakeupHook(client, options) {
   }
   async function triggerCompaction(sessionID) {
     try {
-      log("[deepwork-wakeup] triggering compaction via tui.executeCommand", {
+      log("[deepwork-wakeup] triggering compaction via session.summarize", {
         sessionID
       });
       const state = getState(sessionID);
       state.deepworkFileWritten = true;
-      try {
-        const rawClient = client._client;
-        if (rawClient) {
-          const { OpencodeClient: V2Client } = await import("@opencode-ai/sdk/v2");
-          const v2 = new V2Client({ client: rawClient });
-          const result = await v2.tui.executeCommand({
-            command: "session.compact"
-          });
-          if ("error" in result && result.error) {
-            log("[deepwork-wakeup] tui.executeCommand returned error", {
-              sessionID,
-              error: String(result.error)
-            });
-            state.compactCycle = "normal";
-            state.lastCompactAt = Date.now();
-            state.deepworkFileWritten = false;
-            return;
-          }
-          log("[deepwork-wakeup] compaction triggered via tui.executeCommand", {
-            sessionID
-          });
-          return;
-        }
-      } catch (err) {
-        log("[deepwork-wakeup] v2 tui.executeCommand failed", {
-          sessionID,
-          error: err instanceof Error ? err.message : String(err)
-        });
-      }
-      log("[deepwork-wakeup] falling back to continue prompt", { sessionID });
-      state.compactCycle = "normal";
-      state.lastCompactAt = Date.now();
-      const sent = await sendPrompt(sessionID, "Deepwork file saved. Continue your work — the system will automatically compact your context when needed. After any compaction, read your deepwork progress file under `.slim/deepwork/` and continue exactly where you left off.", "compact-continue");
-      if (!sent) {
-        log("[deepwork-wakeup] failed to send compact-continue prompt", {
+      const model = await resolveModel?.(sessionID);
+      if (!model) {
+        log("[deepwork-wakeup] no model resolved for compaction, falling back to continue prompt", {
           sessionID
         });
+        state.compactCycle = "normal";
+        state.lastCompactAt = Date.now();
+        await sendPrompt(sessionID, "Deepwork file saved. Continue your work — the system will automatically compact your context when needed. After any compaction, read your deepwork progress file under `.slim/deepwork/` and continue exactly where you left off.", "compact-continue");
+        return;
       }
+      const sessionClient = client.session;
+      if (typeof sessionClient.summarize !== "function") {
+        log("[deepwork-wakeup] session.summarize unavailable, falling back to continue prompt", {
+          sessionID
+        });
+        state.compactCycle = "normal";
+        state.lastCompactAt = Date.now();
+        await sendPrompt(sessionID, "Deepwork file saved. Continue your work — the system will automatically compact your context when needed. After any compaction, read your deepwork progress file under `.slim/deepwork/` and continue exactly where you left off.", "compact-continue");
+        return;
+      }
+      const result = await sessionClient.summarize({
+        path: { id: sessionID },
+        body: {
+          providerID: model.providerID,
+          modelID: model.modelID,
+          auto: false
+        }
+      });
+      if (result.error) {
+        log("[deepwork-wakeup] session.summarize returned error", {
+          sessionID,
+          error: String(result.error)
+        });
+        state.compactCycle = "normal";
+        state.lastCompactAt = Date.now();
+        return;
+      }
+      log("[deepwork-wakeup] compaction triggered via session.summarize", {
+        sessionID
+      });
     } catch (err) {
-      log("[deepwork-wakeup] failed to trigger compaction", {
+      log("[deepwork-wakeup] failed to trigger compaction via session.summarize", {
         sessionID,
         error: err instanceof Error ? err.message : String(err)
       });
@@ -25529,7 +25531,7 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
     compacting: async (input, output) => {
       if (!shouldManageSession(input.sessionID))
         return;
-      output.context.push("The orchestrator maintains a deepwork progress file under `.slim/deepwork/`. After compaction, the orchestrator will re-read this file to restore its full working context. Preserve any references to deepwork file paths, active phase status, file references, and key decisions in the summary. " + "The deepwork file itself is NOT part of the context — it is an external " + "file the orchestrator reads after compaction.");
+      output.context.push("The orchestrator maintains a deepwork progress file under `.slim/deepwork/`. " + "After compaction, the orchestrator will re-read this file to restore its " + "full working context. Preserve any references to deepwork file paths, " + "active phase status, file references, and key decisions in the summary. " + "The deepwork file itself is NOT part of the context — it is an external " + "file the orchestrator reads after compaction.");
       log("[deepwork-wakeup] injected deepwork context into compaction prompt", {
         sessionID: input.sessionID
       });
