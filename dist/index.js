@@ -24357,6 +24357,7 @@ var DEFAULT_GATE_TIMEOUT_MS = 600000;
 var GATE_FAIL_COOLDOWN_MS = 120000;
 var DEFAULT_CONTEXT_THRESHOLD = 400000;
 var DEFAULT_COMPACT_COOLDOWN_MS = 60000;
+var COMPACT_FALLBACK_TIMEOUT_MS = 30000;
 var GATE_DIR_NAME = ".slim/deepwork/gates";
 var CONSULTATION_DIR_NAME = ".slim/deepwork/consultations";
 function persistGate(directory, sessionID, gate) {
@@ -24497,6 +24498,7 @@ function createDeepworkWakeupHook(client, options) {
   const hasHadBackgroundWork = new Set;
   const timers = new Map;
   const consultationTimers = new Map;
+  const compactFallbackTimers = new Map;
   const sessionsSeen = new Set;
   function getState(sessionID) {
     let s = states.get(sessionID);
@@ -24654,6 +24656,16 @@ function createDeepworkWakeupHook(client, options) {
       const sessionClient = client.session;
       const model = await resolveModel?.(sessionID);
       if (typeof sessionClient.command === "function") {
+        const existingTimer = compactFallbackTimers.get(sessionID);
+        if (existingTimer)
+          clearTimeout(existingTimer);
+        compactFallbackTimers.set(sessionID, setTimeout(() => {
+          const state2 = getState(sessionID);
+          if (state2.compactCycle !== "compacting")
+            return;
+          log("[deepwork-wakeup] session.compacted not received within 30s, falling back to promptAsync /compact", { sessionID });
+          triggerCompactionViaPrompt(sessionID, sessionClient, model).catch(() => {});
+        }, COMPACT_FALLBACK_TIMEOUT_MS));
         sessionClient.command({
           path: { id: sessionID },
           body: {
@@ -24673,6 +24685,11 @@ function createDeepworkWakeupHook(client, options) {
             sessionID,
             error: err instanceof Error ? err.message : String(err)
           });
+          const timer = compactFallbackTimers.get(sessionID);
+          if (timer) {
+            clearTimeout(timer);
+            compactFallbackTimers.delete(sessionID);
+          }
           await triggerCompactionViaPrompt(sessionID, sessionClient, model);
         });
         return;
@@ -25295,6 +25312,11 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
           return;
         const state = getState(compactedSessionId);
         if (state.compactCycle === "compacting") {
+          const timer = compactFallbackTimers.get(compactedSessionId);
+          if (timer) {
+            clearTimeout(timer);
+            compactFallbackTimers.delete(compactedSessionId);
+          }
           log("[deepwork-wakeup] compaction complete, sending refresh prompt", {
             sessionId: compactedSessionId
           });
@@ -25309,6 +25331,11 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
       if (event.type === "session.deleted") {
         clearTimer(sessionId);
         clearConsultationTimer(sessionId);
+        const compactTimer = compactFallbackTimers.get(sessionId);
+        if (compactTimer) {
+          clearTimeout(compactTimer);
+          compactFallbackTimers.delete(sessionId);
+        }
         states.delete(sessionId);
         hasHadBackgroundWork.delete(sessionId);
         sessionsSeen.delete(sessionId);
@@ -25510,6 +25537,12 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
       }
       for (const id of consultationTimers.keys()) {
         clearConsultationTimer(id);
+      }
+      for (const id of compactFallbackTimers.keys()) {
+        const timer = compactFallbackTimers.get(id);
+        if (timer)
+          clearTimeout(timer);
+        compactFallbackTimers.delete(id);
       }
     }
   };

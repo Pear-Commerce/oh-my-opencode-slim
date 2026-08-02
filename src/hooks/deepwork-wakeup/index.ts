@@ -61,6 +61,7 @@ const GATE_FAIL_COOLDOWN_MS = 120_000; // 2 min cooldown after gate FAIL before 
 // ── Context-compact defaults ─────────────────────────────────────────
 const DEFAULT_CONTEXT_THRESHOLD = 400_000; // 400k input tokens
 const DEFAULT_COMPACT_COOLDOWN_MS = 60_000; // 1 min between compact cycles
+const COMPACT_FALLBACK_TIMEOUT_MS = 30_000; // 30s before falling back to promptAsync /compact
 
 const GATE_DIR_NAME = '.slim/deepwork/gates';
 const CONSULTATION_DIR_NAME = '.slim/deepwork/consultations';
@@ -463,6 +464,7 @@ export function createDeepworkWakeupHook(
   const hasHadBackgroundWork = new Set<string>();
   const timers = new Map<string, ReturnType<typeof setInterval>>();
   const consultationTimers = new Map<string, ReturnType<typeof setInterval>>();
+  const compactFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const sessionsSeen = new Set<string>();
 
   function getState(sessionID: string): SessionWakeState {
@@ -746,8 +748,31 @@ export function createDeepworkWakeupHook(
       const model = await resolveModel?.(sessionID);
 
       // Try the session.command API first (the proper way to trigger
-      // compaction programmatically).
+      // compaction programmatically). But set a fallback timer — if
+      // session.compacted doesn't fire within 30s, the command was
+      // silently swallowed (happens with very large sessions), so fall
+      // back to sending /compact via promptAsync.
       if (typeof sessionClient.command === 'function') {
+        // Clear any existing fallback timer
+        const existingTimer = compactFallbackTimers.get(sessionID);
+        if (existingTimer) clearTimeout(existingTimer);
+
+        // Set fallback timer
+        compactFallbackTimers.set(
+          sessionID,
+          setTimeout(() => {
+            const state = getState(sessionID);
+            if (state.compactCycle !== 'compacting') return; // already handled
+            log(
+              '[deepwork-wakeup] session.compacted not received within 30s, falling back to promptAsync /compact',
+              { sessionID },
+            );
+            triggerCompactionViaPrompt(sessionID, sessionClient, model).catch(
+              () => {},
+            );
+          }, COMPACT_FALLBACK_TIMEOUT_MS),
+        );
+
         sessionClient
           .command({
             path: { id: sessionID },
@@ -775,6 +800,12 @@ export function createDeepworkWakeupHook(
                 error: err instanceof Error ? err.message : String(err),
               },
             );
+            // Clear the fallback timer — we're falling back now
+            const timer = compactFallbackTimers.get(sessionID);
+            if (timer) {
+              clearTimeout(timer);
+              compactFallbackTimers.delete(sessionID);
+            }
             // Fallback: send "/compact" as a promptAsync message.
             // The orchestrator will execute the /compact command itself.
             await triggerCompactionViaPrompt(
@@ -1806,6 +1837,12 @@ export function createDeepworkWakeupHook(
         if (!shouldManageSession(compactedSessionId)) return;
         const state = getState(compactedSessionId);
         if (state.compactCycle === 'compacting') {
+          // Clear the fallback timer — compaction succeeded
+          const timer = compactFallbackTimers.get(compactedSessionId);
+          if (timer) {
+            clearTimeout(timer);
+            compactFallbackTimers.delete(compactedSessionId);
+          }
           log(
             '[deepwork-wakeup] compaction complete, sending refresh prompt',
             {
@@ -1837,6 +1874,11 @@ export function createDeepworkWakeupHook(
       if (event.type === 'session.deleted') {
         clearTimer(sessionId);
         clearConsultationTimer(sessionId);
+        const compactTimer = compactFallbackTimers.get(sessionId);
+        if (compactTimer) {
+          clearTimeout(compactTimer);
+          compactFallbackTimers.delete(sessionId);
+        }
         states.delete(sessionId);
         hasHadBackgroundWork.delete(sessionId);
         sessionsSeen.delete(sessionId);
@@ -2280,6 +2322,11 @@ export function createDeepworkWakeupHook(
       }
       for (const id of consultationTimers.keys()) {
         clearConsultationTimer(id);
+      }
+      for (const id of compactFallbackTimers.keys()) {
+        const timer = compactFallbackTimers.get(id);
+        if (timer) clearTimeout(timer);
+        compactFallbackTimers.delete(id);
       }
     },
   };
