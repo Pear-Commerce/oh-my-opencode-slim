@@ -1625,32 +1625,28 @@ export function createDeepworkWakeupHook(
       });
 
       // The context window size is best approximated by the MAXIMUM
-      // input tokens across all assistant messages — the last LLM call
-      // before a trivial response (like "hi") may have a tiny input
-      // because the context was already compacted or the response was
-      // trivial. The max input tokens reflects the peak context size
-      // the session reached.
-      // We check the last N assistant messages to catch the current
-      // context size without being thrown off by an old compacted peak.
-      const RECENT_N = 10;
+      // input tokens across all assistant messages. Each LLM call's
+      // tokens.input reflects the full context window at that point.
+      // A trivial "hi" response may have tiny input, but earlier calls
+      // in the same session carry the real context size. The max across
+      // ALL assistant messages gives us the peak context size.
       const assistantMessages = messages.filter(
         (m) =>
           m.info?.role === 'assistant' &&
           typeof m.info?.tokens?.input === 'number',
       );
-      const recentAssistant = assistantMessages.slice(-RECENT_N);
-      const maxRecentInput = recentAssistant.reduce(
+      const maxInput = assistantMessages.reduce(
         (max, m) => Math.max(max, m.info.tokens!.input!),
         0,
       );
 
-      const inputTokens = maxRecentInput;
+      const inputTokens = maxInput;
       state.lastInputTokens = inputTokens;
 
       log('[deepwork-wakeup] token check result', {
         sessionID,
         inputTokens,
-        recentAssistantCount: recentAssistant.length,
+        assistantCount: assistantMessages.length,
         threshold: contextThreshold,
         exceeded: inputTokens >= contextThreshold,
       });
