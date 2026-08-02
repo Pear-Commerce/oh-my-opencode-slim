@@ -739,9 +739,8 @@ export function createDeepworkWakeupHook(
    * with UnknownError). The v1 SDK doesn't expose the compact endpoint.
    * But the REST endpoint exists in the OpenCode server and works.
    *
-   * This is fire-and-forget — compaction is an LLM call that takes 30+
-   * seconds. The `session.compacted` event fires when done, and the
-   * event handler sends the refresh prompt at that point.
+   * Uses the SDK client's internal _client which already has auth
+   * headers configured (same approach as magic-compact plugin).
    */
   async function triggerCompaction(sessionID: string): Promise<void> {
     try {
@@ -760,18 +759,41 @@ export function createDeepworkWakeupHook(
       const base = serverUrl.replace(/\/$/, '');
       const url = `${base}/api/session/${sessionID}/compact`;
 
+      // Get auth headers from the SDK client's internal client.
+      // The SDK client (input.client) wraps a lower-level HTTP client
+      // that has Authorization headers configured. We extract those
+      // headers and use them with our own fetch call.
+      // Same approach as magic-compact: input.client["_client"]
+      let authHeaders: Record<string, string> = {};
+      try {
+        const rawClient = (client as unknown as { _client?: { config?: { headers?: Record<string, string> } } })._client;
+        if (rawClient?.config?.headers) {
+          authHeaders = rawClient.config.headers;
+        }
+      } catch {
+        // _client structure may vary across SDK versions — try best effort
+      }
+
       log('[deepwork-wakeup] triggering compaction via REST API', {
         sessionID,
         url,
+        hasAuth: Boolean(authHeaders.Authorization || authHeaders.authorization),
       });
 
       // Fire-and-forget with a 2-minute timeout. The session.compacted
       // event handler picks up from here when compaction completes.
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120_000);
       fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders,
+        },
+        signal: controller.signal,
       })
         .then(async (resp) => {
+          clearTimeout(timeout);
           if (!resp.ok) {
             const body = await resp.text().catch(() => '');
             log('[deepwork-wakeup] compaction REST API returned error', {
@@ -790,6 +812,7 @@ export function createDeepworkWakeupHook(
           }
         })
         .catch((err) => {
+          clearTimeout(timeout);
           log('[deepwork-wakeup] compaction REST API fetch failed', {
             sessionID,
             error: err instanceof Error ? err.message : String(err),

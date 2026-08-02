@@ -24673,14 +24673,29 @@ function createDeepworkWakeupHook(client, options) {
       }
       const base = serverUrl.replace(/\/$/, "");
       const url = `${base}/api/session/${sessionID}/compact`;
+      let authHeaders = {};
+      try {
+        const rawClient = client._client;
+        if (rawClient?.config?.headers) {
+          authHeaders = rawClient.config.headers;
+        }
+      } catch {}
       log("[deepwork-wakeup] triggering compaction via REST API", {
         sessionID,
-        url
+        url,
+        hasAuth: Boolean(authHeaders.Authorization || authHeaders.authorization)
       });
+      const controller = new AbortController;
+      const timeout = setTimeout(() => controller.abort(), 120000);
       fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" }
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders
+        },
+        signal: controller.signal
       }).then(async (resp) => {
+        clearTimeout(timeout);
         if (!resp.ok) {
           const body = await resp.text().catch(() => "");
           log("[deepwork-wakeup] compaction REST API returned error", {
@@ -24697,6 +24712,7 @@ function createDeepworkWakeupHook(client, options) {
           });
         }
       }).catch((err) => {
+        clearTimeout(timeout);
         log("[deepwork-wakeup] compaction REST API fetch failed", {
           sessionID,
           error: err instanceof Error ? err.message : String(err)
