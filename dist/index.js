@@ -25196,7 +25196,16 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
         messageCount: messages.length,
         lastRole: messages.length > 0 ? messages[messages.length - 1]?.info?.role : "none"
       });
-      const assistantMessages = messages.filter((m) => m.info?.role === "assistant" && typeof m.info?.tokens?.input === "number");
+      const allMessages = messages;
+      let lastCompactionIdx = -1;
+      for (let i = allMessages.length - 1;i >= 0; i--) {
+        if (allMessages[i].info?.summary === true) {
+          lastCompactionIdx = i;
+          break;
+        }
+      }
+      const postCompactionMessages = allMessages.slice(lastCompactionIdx + 1);
+      const assistantMessages = postCompactionMessages.filter((m) => m.info?.role === "assistant" && typeof m.info?.tokens?.input === "number");
       const maxInput = assistantMessages.reduce((max, m) => Math.max(max, m.info.tokens.input), 0);
       const inputTokens = maxInput;
       state.lastInputTokens = inputTokens;
@@ -25204,6 +25213,7 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
         sessionID,
         inputTokens,
         assistantCount: assistantMessages.length,
+        lastCompactionIdx,
         threshold: contextThreshold,
         exceeded: inputTokens >= contextThreshold
       });

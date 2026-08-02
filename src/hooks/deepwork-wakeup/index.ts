@@ -1625,12 +1625,33 @@ export function createDeepworkWakeupHook(
       });
 
       // The context window size is best approximated by the MAXIMUM
-      // input tokens across all assistant messages. Each LLM call's
-      // tokens.input reflects the full context window at that point.
-      // A trivial "hi" response may have tiny input, but earlier calls
-      // in the same session carry the real context size. The max across
-      // ALL assistant messages gives us the peak context size.
-      const assistantMessages = messages.filter(
+      // input tokens across assistant messages AFTER the last
+      // compaction. Each LLM call's tokens.input reflects the full
+      // context window at that point. After a compaction, old
+      // high-token messages remain in history but no longer represent
+      // the current context size. The `summary: true` flag on an
+      // assistant message marks a compaction summary — we only scan
+      // assistant messages after the last one.
+      const allMessages = messages as Array<{
+        info: {
+          role?: string;
+          summary?: boolean;
+          tokens?: { input?: number };
+        };
+      }>;
+
+      // Find the index of the last compaction summary message
+      let lastCompactionIdx = -1;
+      for (let i = allMessages.length - 1; i >= 0; i--) {
+        if (allMessages[i].info?.summary === true) {
+          lastCompactionIdx = i;
+          break;
+        }
+      }
+
+      // Only scan assistant messages after the last compaction
+      const postCompactionMessages = allMessages.slice(lastCompactionIdx + 1);
+      const assistantMessages = postCompactionMessages.filter(
         (m) =>
           m.info?.role === 'assistant' &&
           typeof m.info?.tokens?.input === 'number',
@@ -1647,6 +1668,7 @@ export function createDeepworkWakeupHook(
         sessionID,
         inputTokens,
         assistantCount: assistantMessages.length,
+        lastCompactionIdx,
         threshold: contextThreshold,
         exceeded: inputTokens >= contextThreshold,
       });
