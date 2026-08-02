@@ -36968,14 +36968,6 @@ var OhMyOpenCodeLite = async (ctx) => {
       deepworkCommandHook.registerCommand(opencodeConfig);
       reflectCommandHook.registerCommand(opencodeConfig);
       presetManager.registerCommand(opencodeConfig);
-      const oc = opencodeConfig;
-      if (!oc.compaction) {
-        oc.compaction = {};
-      }
-      if (oc.compaction.reserved === undefined) {
-        oc.compaction.reserved = 600000;
-        log("[plugin] set compaction.reserved = 600000 (auto-compact at ~400k)");
-      }
     },
     event: async (input) => {
       const event = input.event;
