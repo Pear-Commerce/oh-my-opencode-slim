@@ -25179,20 +25179,16 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
         messageCount: messages.length,
         lastRole: messages.length > 0 ? messages[messages.length - 1]?.info?.role : "none"
       });
-      let totalInputTokens = 0;
-      let lastInputTokens = 0;
-      for (const m of messages) {
-        if (m.info?.role === "assistant" && typeof m.info?.tokens?.input === "number") {
-          totalInputTokens += m.info.tokens.input;
-          lastInputTokens = m.info.tokens.input;
-        }
-      }
-      const inputTokens = lastInputTokens;
+      const RECENT_N = 10;
+      const assistantMessages = messages.filter((m) => m.info?.role === "assistant" && typeof m.info?.tokens?.input === "number");
+      const recentAssistant = assistantMessages.slice(-RECENT_N);
+      const maxRecentInput = recentAssistant.reduce((max, m) => Math.max(max, m.info.tokens.input), 0);
+      const inputTokens = maxRecentInput;
       state.lastInputTokens = inputTokens;
       log("[deepwork-wakeup] token check result", {
         sessionID,
         inputTokens,
-        totalInputTokens,
+        recentAssistantCount: recentAssistant.length,
         threshold: contextThreshold,
         exceeded: inputTokens >= contextThreshold
       });
