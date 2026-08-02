@@ -24690,24 +24690,37 @@ function createDeepworkWakeupHook(client, options) {
         await sendPrompt(sessionID, "Deepwork file saved. Continue your work — the system will automatically compact your context when needed. After any compaction, read your deepwork progress file under `.slim/deepwork/` and continue exactly where you left off.", "compact-continue");
         return;
       }
-      const result = await sessionClient.summarize({
+      sessionClient.summarize({
         path: { id: sessionID },
         body: {
           providerID: model.providerID,
           modelID: model.modelID,
           auto: false
         }
-      });
-      if (result.error) {
-        log("[deepwork-wakeup] session.summarize returned error", {
-          sessionID,
-          error: String(result.error)
+      }).then((result) => {
+        if (result.error) {
+          log("[deepwork-wakeup] session.summarize returned error", {
+            sessionID,
+            error: String(result.error)
+          });
+          const s = getState(sessionID);
+          s.compactCycle = "normal";
+          s.lastCompactAt = Date.now();
+          return;
+        }
+        log("[deepwork-wakeup] compaction triggered via session.summarize", {
+          sessionID
         });
-        state.compactCycle = "normal";
-        state.lastCompactAt = Date.now();
-        return;
-      }
-      log("[deepwork-wakeup] compaction triggered via session.summarize", {
+      }).catch((err) => {
+        log("[deepwork-wakeup] session.summarize failed", {
+          sessionID,
+          error: err instanceof Error ? err.message : String(err)
+        });
+        const s = getState(sessionID);
+        s.compactCycle = "normal";
+        s.lastCompactAt = Date.now();
+      });
+      log("[deepwork-wakeup] session.summarize fired (not awaited)", {
         sessionID
       });
     } catch (err) {

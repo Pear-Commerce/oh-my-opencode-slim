@@ -783,8 +783,10 @@ export function createDeepworkWakeupHook(
       }
 
       // Call session.summarize — this is the real compaction endpoint
-      // that the TUI uses internally. It creates a compaction message
-      // and runs the agent loop until compaction is processed.
+      // that the TUI uses internally. Fire-and-forget: do NOT await,
+      // because awaiting blocks the event handler and can deadlock
+      // the session ("Summarizing..." hang). The session.compacted
+      // event will fire when compaction completes.
       const sessionClient = client.session as unknown as {
         summarize?: (args: {
           path: { id: string };
@@ -811,27 +813,43 @@ export function createDeepworkWakeupHook(
         return;
       }
 
-      const result = await sessionClient.summarize({
-        path: { id: sessionID },
-        body: {
-          providerID: model.providerID,
-          modelID: model.modelID,
-          auto: false,
-        },
-      });
-
-      if (result.error) {
-        log('[deepwork-wakeup] session.summarize returned error', {
-          sessionID,
-          error: String(result.error),
+      // Fire-and-forget — do NOT await. Awaiting blocks the event
+      // handler and can deadlock the session.
+      sessionClient
+        .summarize({
+          path: { id: sessionID },
+          body: {
+            providerID: model.providerID,
+            modelID: model.modelID,
+            auto: false,
+          },
+        })
+        .then((result) => {
+          if (result.error) {
+            log('[deepwork-wakeup] session.summarize returned error', {
+              sessionID,
+              error: String(result.error),
+            });
+            const s = getState(sessionID);
+            s.compactCycle = 'normal';
+            s.lastCompactAt = Date.now();
+            return;
+          }
+          log('[deepwork-wakeup] compaction triggered via session.summarize', {
+            sessionID,
+          });
+        })
+        .catch((err) => {
+          log('[deepwork-wakeup] session.summarize failed', {
+            sessionID,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          const s = getState(sessionID);
+          s.compactCycle = 'normal';
+          s.lastCompactAt = Date.now();
         });
-        state.compactCycle = 'normal';
-        state.lastCompactAt = Date.now();
-        // Don't clear deepworkFileWritten — auto-compact may still fire
-        return;
-      }
 
-      log('[deepwork-wakeup] compaction triggered via session.summarize', {
+      log('[deepwork-wakeup] session.summarize fired (not awaited)', {
         sessionID,
       });
       // session.compacted event will fire when compaction completes.
