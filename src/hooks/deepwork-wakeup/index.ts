@@ -708,50 +708,153 @@ export function createDeepworkWakeupHook(
    * `session.compacted` event will fire when it's done, and the event
    * handler sends the refresh prompt at that point.
    */
-  function triggerCompaction(sessionID: string): void {
+  async function triggerCompaction(sessionID: string): Promise<void> {
     try {
       const sessionClient = client.session as unknown as {
         command?: (args: {
           path: { id: string };
-          body: { command: string; arguments: string };
+          body: {
+            command: string;
+            arguments: string;
+            agent?: string;
+            model?: string;
+          };
+        }) => Promise<unknown>;
+        promptAsync?: (args: {
+          path: { id: string };
+          body: {
+            parts: Array<{ type: 'text'; text: string }>;
+            model?: { providerID: string; modelID: string };
+            agent?: string;
+          };
         }) => Promise<unknown>;
       };
-      if (typeof sessionClient.command !== 'function') {
-        log(
-          '[deepwork-wakeup] session.command unavailable, cannot trigger compaction',
-          {
-            sessionID,
-          },
-        );
-        // Reset the cycle so the orchestrator isn't stuck in 'compacting'
-        const state = getState(sessionID);
-        state.compactCycle = 'normal';
-        state.lastCompactAt = Date.now();
+
+      // Resolve the session's model/agent so the command API knows which
+      // agent context to compact. Without this, agent=undefined causes
+      // an UnknownError on the server side.
+      const model = await resolveModel?.(sessionID);
+
+      // Try the session.command API first (the proper way to trigger
+      // compaction programmatically).
+      if (typeof sessionClient.command === 'function') {
+        sessionClient
+          .command({
+            path: { id: sessionID },
+            body: {
+              command: 'session.compact',
+              arguments: '',
+              ...(model?.agent ? { agent: model.agent } : {}),
+              ...(model
+                ? {
+                    model: `${model.providerID}/${model.modelID}`,
+                  }
+                : {}),
+            },
+          })
+          .then(() => {
+            log('[deepwork-wakeup] compaction triggered via session.command', {
+              sessionID,
+            });
+          })
+          .catch(async (err) => {
+            log(
+              '[deepwork-wakeup] session.command failed, falling back to promptAsync /compact',
+              {
+                sessionID,
+                error: err instanceof Error ? err.message : String(err),
+              },
+            );
+            // Fallback: send "/compact" as a promptAsync message.
+            // The orchestrator will execute the /compact command itself.
+            await triggerCompactionViaPrompt(
+              sessionID,
+              sessionClient,
+              model,
+            );
+          });
         return;
       }
-      // Fire-and-forget — don't await. The session.compacted event
-      // handler picks up from here.
-      sessionClient
-        .command({
-          path: { id: sessionID },
-          body: { command: 'session.compact', arguments: '' },
-        })
-        .catch((err) => {
-          log('[deepwork-wakeup] compaction trigger failed', {
-            sessionID,
-            error: err instanceof Error ? err.message : String(err),
-          });
-          // Reset on failure so the cycle can retry later
-          const state = getState(sessionID);
-          state.compactCycle = 'normal';
-          state.lastCompactAt = Date.now();
-        });
-      log('[deepwork-wakeup] compaction triggered', { sessionID });
+
+      // No session.command API — use promptAsync fallback directly
+      if (typeof sessionClient.promptAsync === 'function') {
+        await triggerCompactionViaPrompt(sessionID, sessionClient, model);
+        return;
+      }
+
+      log(
+        '[deepwork-wakeup] no session.command or promptAsync available, cannot trigger compaction',
+        { sessionID },
+      );
+      // Reset the cycle so the orchestrator isn't stuck in 'compacting'
+      const state = getState(sessionID);
+      state.compactCycle = 'normal';
+      state.lastCompactAt = Date.now();
     } catch (err) {
       log('[deepwork-wakeup] failed to trigger compaction', {
         sessionID,
         error: err instanceof Error ? err.message : String(err),
       });
+      const state = getState(sessionID);
+      state.compactCycle = 'normal';
+      state.lastCompactAt = Date.now();
+    }
+  }
+
+  /**
+   * Fallback: trigger compaction by sending "/compact" as a promptAsync
+   * message. The orchestrator will execute the /compact slash command
+   * itself, which triggers the same compaction flow.
+   */
+  async function triggerCompactionViaPrompt(
+    sessionID: string,
+    sessionClient: {
+      promptAsync?: (args: {
+        path: { id: string };
+        body: {
+          parts: Array<{ type: 'text'; text: string }>;
+          model?: { providerID: string; modelID: string };
+          agent?: string;
+        };
+      }) => Promise<unknown>;
+    },
+    model:
+      | { providerID: string; modelID: string; agent?: string }
+      | undefined,
+  ): Promise<void> {
+    try {
+      if (typeof sessionClient.promptAsync !== 'function') {
+        log(
+          '[deepwork-wakeup] promptAsync unavailable for compaction fallback',
+          { sessionID },
+        );
+        const state = getState(sessionID);
+        state.compactCycle = 'normal';
+        state.lastCompactAt = Date.now();
+        return;
+      }
+
+      await sessionClient.promptAsync({
+        path: { id: sessionID },
+        body: {
+          parts: [{ type: 'text', text: '/compact' }],
+          ...(model
+            ? {
+                model,
+                ...(model.agent ? { agent: model.agent } : {}),
+              }
+            : {}),
+        },
+      });
+      log('[deepwork-wakeup] compaction triggered via promptAsync /compact', {
+        sessionID,
+      });
+    } catch (err) {
+      log('[deepwork-wakeup] promptAsync /compact fallback also failed', {
+        sessionID,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // Reset on failure so the cycle can retry later
       const state = getState(sessionID);
       state.compactCycle = 'normal';
       state.lastCompactAt = Date.now();
@@ -1687,7 +1790,7 @@ export function createDeepworkWakeupHook(
             },
           );
           state.compactCycle = 'compacting';
-          triggerCompaction(sessionId);
+          await triggerCompaction(sessionId);
           return; // don't fire done-check/gate during compaction
         }
         if (state.compactCycle === 'awaitingRefresh') {

@@ -24649,33 +24649,76 @@ function createDeepworkWakeupHook(client, options) {
       state.awaitingDoneCheck = true;
     }
   }
-  function triggerCompaction(sessionID) {
+  async function triggerCompaction(sessionID) {
     try {
       const sessionClient = client.session;
-      if (typeof sessionClient.command !== "function") {
-        log("[deepwork-wakeup] session.command unavailable, cannot trigger compaction", {
-          sessionID
+      const model = await resolveModel?.(sessionID);
+      if (typeof sessionClient.command === "function") {
+        sessionClient.command({
+          path: { id: sessionID },
+          body: {
+            command: "session.compact",
+            arguments: "",
+            ...model?.agent ? { agent: model.agent } : {},
+            ...model ? {
+              model: `${model.providerID}/${model.modelID}`
+            } : {}
+          }
+        }).then(() => {
+          log("[deepwork-wakeup] compaction triggered via session.command", {
+            sessionID
+          });
+        }).catch(async (err) => {
+          log("[deepwork-wakeup] session.command failed, falling back to promptAsync /compact", {
+            sessionID,
+            error: err instanceof Error ? err.message : String(err)
+          });
+          await triggerCompactionViaPrompt(sessionID, sessionClient, model);
         });
+        return;
+      }
+      if (typeof sessionClient.promptAsync === "function") {
+        await triggerCompactionViaPrompt(sessionID, sessionClient, model);
+        return;
+      }
+      log("[deepwork-wakeup] no session.command or promptAsync available, cannot trigger compaction", { sessionID });
+      const state = getState(sessionID);
+      state.compactCycle = "normal";
+      state.lastCompactAt = Date.now();
+    } catch (err) {
+      log("[deepwork-wakeup] failed to trigger compaction", {
+        sessionID,
+        error: err instanceof Error ? err.message : String(err)
+      });
+      const state = getState(sessionID);
+      state.compactCycle = "normal";
+      state.lastCompactAt = Date.now();
+    }
+  }
+  async function triggerCompactionViaPrompt(sessionID, sessionClient, model) {
+    try {
+      if (typeof sessionClient.promptAsync !== "function") {
+        log("[deepwork-wakeup] promptAsync unavailable for compaction fallback", { sessionID });
         const state = getState(sessionID);
         state.compactCycle = "normal";
         state.lastCompactAt = Date.now();
         return;
       }
-      sessionClient.command({
+      await sessionClient.promptAsync({
         path: { id: sessionID },
-        body: { command: "session.compact", arguments: "" }
-      }).catch((err) => {
-        log("[deepwork-wakeup] compaction trigger failed", {
-          sessionID,
-          error: err instanceof Error ? err.message : String(err)
-        });
-        const state = getState(sessionID);
-        state.compactCycle = "normal";
-        state.lastCompactAt = Date.now();
+        body: {
+          parts: [{ type: "text", text: "/compact" }],
+          ...model ? {
+            model,
+            ...model.agent ? { agent: model.agent } : {}
+          } : {}
+        }
       });
-      log("[deepwork-wakeup] compaction triggered", { sessionID });
+      log("[deepwork-wakeup] compaction triggered via promptAsync /compact", {
+        sessionID
+      });
     } catch (err) {
-      log("[deepwork-wakeup] failed to trigger compaction", {
+      log("[deepwork-wakeup] promptAsync /compact fallback also failed", {
         sessionID,
         error: err instanceof Error ? err.message : String(err)
       });
@@ -25244,7 +25287,7 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
             sessionId
           });
           state.compactCycle = "compacting";
-          triggerCompaction(sessionId);
+          await triggerCompaction(sessionId);
           return;
         }
         if (state.compactCycle === "awaitingRefresh") {
