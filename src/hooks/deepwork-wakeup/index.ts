@@ -1529,6 +1529,83 @@ export function createDeepworkWakeupHook(
       };
     }): Promise<void> => {
       const event = input.event;
+
+      // ── Context-compact: handle message.updated for token tracking ──
+      // This must be handled BEFORE the generic session ID extraction
+      // because for message.updated events, info.id is the MESSAGE ID
+      // (not the session ID) — the session ID is in info.sessionID.
+      if (event.type === 'message.updated') {
+        const info = event.properties?.info;
+        if (!info) return;
+        // AssistantMessage has sessionID; UserMessage also has sessionID
+        const msgSessionId =
+          (info as { sessionID?: string }).sessionID ??
+          event.properties?.sessionID;
+        if (!msgSessionId) return;
+        if (!shouldManageSession(msgSessionId)) return;
+        // Only assistant messages carry token counts
+        if ((info as { role?: string }).role !== 'assistant') return;
+        const inputTokens =
+          (info as { tokens?: { input?: number } }).tokens?.input ?? 0;
+        if (inputTokens <= 0) return;
+
+        const state = getState(msgSessionId);
+        state.lastInputTokens = inputTokens;
+
+        // Only trigger if:
+        // - tokens exceed threshold
+        // - no compact cycle is in progress
+        // - cooldown has passed since the last cycle
+        if (
+          inputTokens >= contextThreshold &&
+          state.compactCycle === 'normal' &&
+          Date.now() - state.lastCompactAt >= compactCooldownMs
+        ) {
+          log(
+            '[deepwork-wakeup] context threshold exceeded, starting compact cycle',
+            {
+              sessionId: msgSessionId,
+              inputTokens,
+              threshold: contextThreshold,
+            },
+          );
+          // Set to 'pendingWrite' — the write prompt will be sent when
+          // the orchestrator goes idle (via sendPrompt, which requires
+          // idle state). This avoids sending promptAsync to a busy
+          // session and ensures the write prompt is the next thing the
+          // orchestrator processes after its current turn completes.
+          state.compactCycle = 'pendingWrite';
+        }
+        return;
+      }
+
+      // ── Context-compact: handle session.compacted event ─────────────
+      if (event.type === 'session.compacted') {
+        const compactedSessionId = event.properties?.sessionID;
+        if (!compactedSessionId) return;
+        if (!shouldManageSession(compactedSessionId)) return;
+        const state = getState(compactedSessionId);
+        if (state.compactCycle === 'compacting') {
+          log(
+            '[deepwork-wakeup] compaction complete, sending refresh prompt',
+            {
+              sessionId: compactedSessionId,
+            },
+          );
+          state.compactCycle = 'awaitingRefresh';
+          // Send the refresh prompt — the orchestrator re-reads its
+          // deepwork file and continues.
+          await sendPrompt(
+            compactedSessionId,
+            COMPACT_REFRESH_MESSAGE,
+            'compact-refresh',
+          );
+        }
+        return;
+      }
+
+      // Generic session ID extraction for all other event types.
+      // For session.deleted/idle/status, info.id IS the session ID.
       const sessionId =
         event.properties?.info?.id ??
         event.properties?.info?.sessionID ??
@@ -1545,64 +1622,6 @@ export function createDeepworkWakeupHook(
         sessionsSeen.delete(sessionId);
         persistGate(directory, sessionId, undefined); // remove persisted gate
         persistConsultation(directory, sessionId, undefined); // remove persisted consultation
-        return;
-      }
-
-      // ── Context-compact: handle message.updated for token tracking ──
-      if (event.type === 'message.updated') {
-        if (!shouldManageSession(sessionId)) return;
-        const info = event.properties?.info;
-        if (!info || info.role !== 'assistant') return;
-        const inputTokens = info.tokens?.input ?? 0;
-        if (inputTokens <= 0) return;
-
-        const state = getState(sessionId);
-        state.lastInputTokens = inputTokens;
-
-        // Only trigger if:
-        // - tokens exceed threshold
-        // - no compact cycle is in progress
-        // - cooldown has passed since the last cycle
-        if (
-          inputTokens >= contextThreshold &&
-          state.compactCycle === 'normal' &&
-          Date.now() - state.lastCompactAt >= compactCooldownMs
-        ) {
-          log(
-            '[deepwork-wakeup] context threshold exceeded, starting compact cycle',
-            {
-              sessionId,
-              inputTokens,
-              threshold: contextThreshold,
-            },
-          );
-          state.compactCycle = 'pendingWrite';
-          // The write prompt will be sent when the orchestrator goes idle
-          // (via sendPrompt in the idle handler). This avoids sending
-          // promptAsync to a busy session and ensures the write prompt is
-          // the next thing the orchestrator processes after its current
-          // turn completes.
-        }
-        return;
-      }
-
-      // ── Context-compact: handle session.compacted event ─────────────
-      if (event.type === 'session.compacted') {
-        if (!shouldManageSession(sessionId)) return;
-        const state = getState(sessionId);
-        if (state.compactCycle === 'compacting') {
-          log('[deepwork-wakeup] compaction complete, sending refresh prompt', {
-            sessionId,
-          });
-          state.compactCycle = 'awaitingRefresh';
-          // Send the refresh prompt — the orchestrator re-reads its
-          // deepwork file and continues.
-          await sendPrompt(
-            sessionId,
-            COMPACT_REFRESH_MESSAGE,
-            'compact-refresh',
-          );
-        }
         return;
       }
 

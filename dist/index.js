@@ -24340,7 +24340,13 @@ function createDeepworkCommandHook() {
 }
 // src/hooks/deepwork-wakeup/index.ts
 import { execSync } from "node:child_process";
-import { mkdirSync as mkdirSync5, readFileSync as readFileSync7, writeFileSync as writeFileSync5, unlinkSync as unlinkSync2, existsSync as existsSync7 } from "node:fs";
+import {
+  existsSync as existsSync7,
+  mkdirSync as mkdirSync5,
+  readFileSync as readFileSync7,
+  unlinkSync as unlinkSync2,
+  writeFileSync as writeFileSync5
+} from "node:fs";
 import { join as join11 } from "node:path";
 var DEFAULT_DEDUP_WINDOW_MS = 3000;
 var DEFAULT_WAKE_DELAY_MS = 800;
@@ -24349,6 +24355,8 @@ var DEFAULT_MAX_NO_PROGRESS = 15;
 var MESSAGE_READ_DELAY_MS = 500;
 var DEFAULT_GATE_TIMEOUT_MS = 600000;
 var GATE_FAIL_COOLDOWN_MS = 120000;
+var DEFAULT_CONTEXT_THRESHOLD = 400000;
+var DEFAULT_COMPACT_COOLDOWN_MS = 60000;
 var GATE_DIR_NAME = ".slim/deepwork/gates";
 var CONSULTATION_DIR_NAME = ".slim/deepwork/consultations";
 function persistGate(directory, sessionID, gate) {
@@ -24439,14 +24447,52 @@ var EVENT_WAKEUP_MESSAGE = "Background work is ready to reconcile. Review the Ba
 var DONE_CHECK_MESSAGE = "Have you completed all work in the current deepwork scope, with any remaining work explicitly deferred and documented? Respond with one word: yes or no.";
 var CONTINUE_MESSAGE = "Continue your deepwork. Pick up where you left off and proceed with the next unfinished task.";
 var GATE_FAIL_MESSAGE = "The convergence gate failed. Review the gate output above, fix the issues, and continue.";
+var COMPACT_WRITE_MESSAGE = [
+  "Your context window is approaching its limit. Before automatic compaction,",
+  "write everything you need to preserve to your deepwork progress file under",
+  "`.slim/deepwork/`. Include:",
+  "",
+  "- current goal and understanding of the task;",
+  "- plan drafts, oracle review notes, and key decisions;",
+  "- active implementation phases and their status;",
+  "- file references (paths only, not contents) for all relevant files;",
+  "- research findings from @librarian or other specialists;",
+  "- unresolved questions, blockers, and follow-ups;",
+  "- background job board state (task IDs, agents, ownership);",
+  "- any other context you will need to continue seamlessly after compaction.",
+  "",
+  "Write it NOW. Compaction will be triggered automatically once you finish.",
+  "Do not skip this step — after compaction your context will be summarized",
+  "and you will need the deepwork file to restore your full working state."
+].join(`
+`);
+var COMPACT_REFRESH_MESSAGE = [
+  "Compaction has completed. Your context has been summarized.",
+  "",
+  "Read your deepwork progress file under `.slim/deepwork/` to restore your",
+  "full working context. After reading it, pick up exactly where you left off",
+  "and continue your work. Do not restart from scratch — the deepwork file",
+  "contains your plan, phase status, file references, and all context you need",
+  "to continue."
+].join(`
+`);
 function createDeepworkWakeupHook(client, options) {
-  const { backgroundJobBoard, shouldManageSession, directory, resolveModel, resolveOracleSpecialistName, hasPendingTaskCall } = options;
+  const {
+    backgroundJobBoard,
+    shouldManageSession,
+    directory,
+    resolveModel,
+    resolveOracleSpecialistName,
+    hasPendingTaskCall
+  } = options;
   const dedupWindowMs = options.dedupWindowMs ?? DEFAULT_DEDUP_WINDOW_MS;
   const wakeDelayMs = options.wakeDelayMs ?? DEFAULT_WAKE_DELAY_MS;
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
   const maxNoProgress = options.maxNoProgress ?? DEFAULT_MAX_NO_PROGRESS;
   const messageReadDelayMs = options.messageReadDelayMs ?? MESSAGE_READ_DELAY_MS;
   const periodicDoneCheck = options.periodicDoneCheck ?? true;
+  const contextThreshold = options.contextThreshold ?? DEFAULT_CONTEXT_THRESHOLD;
+  const compactCooldownMs = options.compactCooldownMs ?? DEFAULT_COMPACT_COOLDOWN_MS;
   const states = new Map;
   const hasHadBackgroundWork = new Set;
   const timers = new Map;
@@ -24467,7 +24513,10 @@ function createDeepworkWakeupHook(client, options) {
         gateCheckPromptSent: false,
         lastConsultationAt: 0,
         consultationPending: false,
-        consultationQueuedAt: 0
+        consultationQueuedAt: 0,
+        compactCycle: "normal",
+        lastCompactAt: 0,
+        lastInputTokens: 0
       };
       states.set(sessionID, s);
     }
@@ -24598,6 +24647,41 @@ function createDeepworkWakeupHook(client, options) {
     const sent = await sendPrompt(sessionID, DONE_CHECK_MESSAGE, "done-check");
     if (sent) {
       state.awaitingDoneCheck = true;
+    }
+  }
+  function triggerCompaction(sessionID) {
+    try {
+      const sessionClient = client.session;
+      if (typeof sessionClient.command !== "function") {
+        log("[deepwork-wakeup] session.command unavailable, cannot trigger compaction", {
+          sessionID
+        });
+        const state = getState(sessionID);
+        state.compactCycle = "normal";
+        state.lastCompactAt = Date.now();
+        return;
+      }
+      sessionClient.command({
+        path: { id: sessionID },
+        body: { command: "session.compact", arguments: "" }
+      }).catch((err) => {
+        log("[deepwork-wakeup] compaction trigger failed", {
+          sessionID,
+          error: err instanceof Error ? err.message : String(err)
+        });
+        const state = getState(sessionID);
+        state.compactCycle = "normal";
+        state.lastCompactAt = Date.now();
+      });
+      log("[deepwork-wakeup] compaction triggered", { sessionID });
+    } catch (err) {
+      log("[deepwork-wakeup] failed to trigger compaction", {
+        sessionID,
+        error: err instanceof Error ? err.message : String(err)
+      });
+      const state = getState(sessionID);
+      state.compactCycle = "normal";
+      state.lastCompactAt = Date.now();
     }
   }
   async function runGate(sessionID, gate) {
@@ -24800,7 +24884,9 @@ The Oracle should read these files as part of its review: ${consultation.files.j
 `);
     const sessionClient = client.session;
     if (typeof sessionClient.promptAsync !== "function") {
-      log("[deepwork-wakeup] promptAsync unavailable for force-consultation", { sessionID });
+      log("[deepwork-wakeup] promptAsync unavailable for force-consultation", {
+        sessionID
+      });
       return;
     }
     const model = await resolveModel?.(sessionID);
@@ -25071,7 +25157,49 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
   return {
     event: async (input) => {
       const event = input.event;
-      const sessionId = event.properties?.info?.id ?? event.properties?.sessionID;
+      if (event.type === "message.updated") {
+        const info = event.properties?.info;
+        if (!info)
+          return;
+        const msgSessionId = info.sessionID ?? event.properties?.sessionID;
+        if (!msgSessionId)
+          return;
+        if (!shouldManageSession(msgSessionId))
+          return;
+        if (info.role !== "assistant")
+          return;
+        const inputTokens = info.tokens?.input ?? 0;
+        if (inputTokens <= 0)
+          return;
+        const state = getState(msgSessionId);
+        state.lastInputTokens = inputTokens;
+        if (inputTokens >= contextThreshold && state.compactCycle === "normal" && Date.now() - state.lastCompactAt >= compactCooldownMs) {
+          log("[deepwork-wakeup] context threshold exceeded, starting compact cycle", {
+            sessionId: msgSessionId,
+            inputTokens,
+            threshold: contextThreshold
+          });
+          state.compactCycle = "pendingWrite";
+        }
+        return;
+      }
+      if (event.type === "session.compacted") {
+        const compactedSessionId = event.properties?.sessionID;
+        if (!compactedSessionId)
+          return;
+        if (!shouldManageSession(compactedSessionId))
+          return;
+        const state = getState(compactedSessionId);
+        if (state.compactCycle === "compacting") {
+          log("[deepwork-wakeup] compaction complete, sending refresh prompt", {
+            sessionId: compactedSessionId
+          });
+          state.compactCycle = "awaitingRefresh";
+          await sendPrompt(compactedSessionId, COMPACT_REFRESH_MESSAGE, "compact-refresh");
+        }
+        return;
+      }
+      const sessionId = event.properties?.info?.id ?? event.properties?.info?.sessionID ?? event.properties?.sessionID;
       if (!sessionId)
         return;
       if (event.type === "session.deleted") {
@@ -25097,6 +25225,38 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
       if (shouldManageSession(sessionId)) {
         const state = getState(sessionId);
         state.idle = true;
+        if (state.compactCycle === "pendingWrite") {
+          log("[deepwork-wakeup] orchestrator idle, sending compact write prompt", {
+            sessionId
+          });
+          const sent = await sendPrompt(sessionId, COMPACT_WRITE_MESSAGE, "compact-write");
+          if (sent) {
+            state.compactCycle = "awaitingWrite";
+          } else {
+            log("[deepwork-wakeup] compact write prompt not sent, will retry on next idle", {
+              sessionId
+            });
+          }
+          return;
+        }
+        if (state.compactCycle === "awaitingWrite") {
+          log("[deepwork-wakeup] orchestrator idle after write, triggering compaction", {
+            sessionId
+          });
+          state.compactCycle = "compacting";
+          triggerCompaction(sessionId);
+          return;
+        }
+        if (state.compactCycle === "awaitingRefresh") {
+          log("[deepwork-wakeup] orchestrator idle after refresh, completing compact cycle", {
+            sessionId
+          });
+          state.compactCycle = "normal";
+          state.lastCompactAt = Date.now();
+        }
+        if (state.compactCycle === "compacting") {
+          return;
+        }
         if (!state.gate && !sessionsSeen.has(sessionId)) {
           const persisted = loadPersistedGate(directory, sessionId);
           if (persisted) {
@@ -25225,6 +25385,14 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
         clearConsultationTimer(sessionID);
       }
     },
+    compacting: async (input, output) => {
+      if (!shouldManageSession(input.sessionID))
+        return;
+      output.context.push("The orchestrator maintains a deepwork progress file under `.slim/deepwork/`. " + "After compaction, the orchestrator will re-read this file to restore its " + "full working context. Preserve any references to deepwork file paths, " + "active phase status, file references, and key decisions in the summary. " + "The deepwork file itself is NOT part of the context — it is an external " + "file the orchestrator reads after compaction.");
+      log("[deepwork-wakeup] injected deepwork context into compaction prompt", {
+        sessionID: input.sessionID
+      });
+    },
     _states: states,
     _timers: timers,
     _consultationTimers: consultationTimers,
@@ -25343,6 +25511,86 @@ function createDelegateTaskRetryHook(_ctx) {
         return;
       output.output += `
 ${buildRetryGuidance(detected)}`;
+    }
+  };
+}
+// src/hooks/filter-available-skills/index.ts
+var AVAILABLE_SKILLS_BLOCK_REGEX = /<available_skills>\s*([\s\S]*?)\s*<\/available_skills>/g;
+var SKILL_NAME_REGEX = /<name>([^<]+)<\/name>/;
+function getCurrentAgent(messages) {
+  for (let index = messages.length - 1;index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.info.role === "user") {
+      return message.info.agent ?? "orchestrator";
+    }
+  }
+  return "orchestrator";
+}
+function extractSkillEntries(blockContent) {
+  const entries = [];
+  const skillEntryRegex = /<skill>\s*([\s\S]*?)\s*<\/skill>/g;
+  for (const match of blockContent.matchAll(skillEntryRegex)) {
+    const block = match[0];
+    const nameMatch = block.match(SKILL_NAME_REGEX);
+    if (!nameMatch) {
+      continue;
+    }
+    entries.push({
+      name: nameMatch[1].trim(),
+      block
+    });
+  }
+  return entries;
+}
+function isSkillAllowed(skillName, permissionRules) {
+  const specificRule = permissionRules[skillName];
+  if (specificRule !== undefined) {
+    return specificRule === "allow";
+  }
+  return permissionRules["*"] === "allow";
+}
+function filterAvailableSkillsText(text, permissionRules) {
+  return text.replace(AVAILABLE_SKILLS_BLOCK_REGEX, (_fullMatch, blockContent) => {
+    const allowedEntries = extractSkillEntries(blockContent).filter((entry) => isSkillAllowed(entry.name, permissionRules));
+    if (allowedEntries.length === 0) {
+      return `<available_skills>
+No skills available.
+</available_skills>`;
+    }
+    return `<available_skills>
+${allowedEntries.map((entry) => entry.block).join(`
+`)}
+</available_skills>`;
+  });
+}
+function createFilterAvailableSkillsHook(_ctx, config) {
+  const permissionRulesByAgent = new Map;
+  const getPermissionRules = (agentName) => {
+    const cached = permissionRulesByAgent.get(agentName);
+    if (cached) {
+      return cached;
+    }
+    const configuredSkills = getAgentOverride(config, agentName)?.skills;
+    const permissionRules = getSkillPermissionsForAgent(agentName, configuredSkills);
+    permissionRulesByAgent.set(agentName, permissionRules);
+    return permissionRules;
+  };
+  return {
+    "experimental.chat.messages.transform": async (_input, output) => {
+      const { messages } = output;
+      if (messages.length === 0) {
+        return;
+      }
+      const agentName = getCurrentAgent(messages);
+      const permissionRules = getPermissionRules(agentName);
+      for (const message of messages) {
+        for (const part of message.parts) {
+          if (part.type !== "text" || !part.text || !part.text.includes("<available_skills>")) {
+            continue;
+          }
+          part.text = filterAvailableSkillsText(part.text, permissionRules);
+        }
+      }
     }
   };
 }
@@ -25620,86 +25868,6 @@ ${SLIM_INTERNAL_INITIATOR_MARKER}`
       });
     },
     _capturedCalls: capturedCalls
-  };
-}
-// src/hooks/filter-available-skills/index.ts
-var AVAILABLE_SKILLS_BLOCK_REGEX = /<available_skills>\s*([\s\S]*?)\s*<\/available_skills>/g;
-var SKILL_NAME_REGEX = /<name>([^<]+)<\/name>/;
-function getCurrentAgent(messages) {
-  for (let index = messages.length - 1;index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.info.role === "user") {
-      return message.info.agent ?? "orchestrator";
-    }
-  }
-  return "orchestrator";
-}
-function extractSkillEntries(blockContent) {
-  const entries = [];
-  const skillEntryRegex = /<skill>\s*([\s\S]*?)\s*<\/skill>/g;
-  for (const match of blockContent.matchAll(skillEntryRegex)) {
-    const block = match[0];
-    const nameMatch = block.match(SKILL_NAME_REGEX);
-    if (!nameMatch) {
-      continue;
-    }
-    entries.push({
-      name: nameMatch[1].trim(),
-      block
-    });
-  }
-  return entries;
-}
-function isSkillAllowed(skillName, permissionRules) {
-  const specificRule = permissionRules[skillName];
-  if (specificRule !== undefined) {
-    return specificRule === "allow";
-  }
-  return permissionRules["*"] === "allow";
-}
-function filterAvailableSkillsText(text, permissionRules) {
-  return text.replace(AVAILABLE_SKILLS_BLOCK_REGEX, (_fullMatch, blockContent) => {
-    const allowedEntries = extractSkillEntries(blockContent).filter((entry) => isSkillAllowed(entry.name, permissionRules));
-    if (allowedEntries.length === 0) {
-      return `<available_skills>
-No skills available.
-</available_skills>`;
-    }
-    return `<available_skills>
-${allowedEntries.map((entry) => entry.block).join(`
-`)}
-</available_skills>`;
-  });
-}
-function createFilterAvailableSkillsHook(_ctx, config) {
-  const permissionRulesByAgent = new Map;
-  const getPermissionRules = (agentName) => {
-    const cached = permissionRulesByAgent.get(agentName);
-    if (cached) {
-      return cached;
-    }
-    const configuredSkills = getAgentOverride(config, agentName)?.skills;
-    const permissionRules = getSkillPermissionsForAgent(agentName, configuredSkills);
-    permissionRulesByAgent.set(agentName, permissionRules);
-    return permissionRules;
-  };
-  return {
-    "experimental.chat.messages.transform": async (_input, output) => {
-      const { messages } = output;
-      if (messages.length === 0) {
-        return;
-      }
-      const agentName = getCurrentAgent(messages);
-      const permissionRules = getPermissionRules(agentName);
-      for (const message of messages) {
-        for (const part of message.parts) {
-          if (part.type !== "text" || !part.text || !part.text.includes("<available_skills>")) {
-            continue;
-          }
-          part.text = filterAvailableSkillsText(part.text, permissionRules);
-        }
-      }
-    }
   };
 }
 // src/hooks/foreground-fallback/index.ts
@@ -26466,7 +26634,13 @@ function createTaskSessionManagerHook(_ctx, options) {
           sessionID: input.sessionID,
           requestedTaskId: requested,
           isRawSessionId: RAW_SESSION_ID_PATTERN.test(requested),
-          jobsOnBoard: backgroundJobBoard.list(input.sessionID).map((j) => ({ taskID: j.taskID, alias: j.alias, agent: j.agent, state: j.state, terminalUnreconciled: j.terminalUnreconciled }))
+          jobsOnBoard: backgroundJobBoard.list(input.sessionID).map((j) => ({
+            taskID: j.taskID,
+            alias: j.alias,
+            agent: j.agent,
+            state: j.state,
+            terminalUnreconciled: j.terminalUnreconciled
+          }))
         });
         if (RAW_SESSION_ID_PATTERN.test(requested)) {
           pendingCall.resumedTaskId = requested;
@@ -30802,10 +30976,6 @@ var gh_grep = {
   url: "https://mcp.grep.app",
   oauth: false
 };
-var datadog = {
-  type: "remote",
-  url: "https://mcp.us5.datadoghq.com/api/unstable/mcp-server/mcp?toolsets=all"
-};
 
 // src/mcp/websearch.ts
 function createWebsearchConfig(config) {
@@ -30838,8 +31008,7 @@ var websearch = createWebsearchConfig();
 var allBuiltinMcps = {
   websearch,
   context7,
-  gh_grep,
-  datadog
+  gh_grep
 };
 function createBuiltinMcps(disabledMcps = [], websearchConfig) {
   const mcps = Object.fromEntries(Object.entries(allBuiltinMcps).filter(([name]) => !disabledMcps.includes(name)));
@@ -33605,7 +33774,9 @@ Usage: /preset <name> to switch.`);
   };
 }
 // src/tools/set-loop-gate.ts
-import { tool as tool5 } from "@opencode-ai/plugin";
+import {
+  tool as tool5
+} from "@opencode-ai/plugin";
 var z7 = tool5.schema;
 function createSetLoopGateTool(options) {
   const set_loop_gate = tool5({
@@ -33669,7 +33840,10 @@ Only callable by orchestrator-class agents in managed sessions.`,
           ...args.timeoutMs ? { timeoutMs: args.timeoutMs } : {}
         };
         options.setGate(sessionID, gate);
-        log("[set_loop_gate] command gate set", { sessionID, command: args.command });
+        log("[set_loop_gate] command gate set", {
+          sessionID,
+          command: args.command
+        });
         return `Loop gate set to command: \`${args.command}\`
 The loop will continue until this command exits 0.`;
       }
@@ -36749,6 +36923,9 @@ ${output.system[0]}` : "");
         }
       }
       collapseSystemInPlace(output.system);
+    },
+    "experimental.session.compacting": async (input, output) => {
+      await deepworkWakeupHook.compacting(input, output);
     },
     "experimental.chat.messages.transform": async (input, output) => {
       const typedOutput = output;

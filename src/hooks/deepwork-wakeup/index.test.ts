@@ -1785,7 +1785,9 @@ describe('deepwork-wakeup hook', () => {
         type: 'message.updated',
         properties: {
           info: {
-            id: sessionId,
+            // message.updated events carry the MESSAGE id in info.id
+            // and the SESSION id in info.sessionID — they are different!
+            id: `msg_${sessionId}`,
             sessionID: sessionId,
             role: 'assistant',
             tokens: { input: inputTokens, output: 100 },
