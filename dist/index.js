@@ -24534,7 +24534,8 @@ function createDeepworkWakeupHook(client, options) {
         compactCycle: "normal",
         lastCompactAt: 0,
         lastInputTokens: 0,
-        deepworkFileWritten: false
+        deepworkFileWritten: false,
+        compactCycleSawBusy: false
       };
       states.set(sessionID, s);
     }
@@ -24681,6 +24682,7 @@ function createDeepworkWakeupHook(client, options) {
         });
         state.compactCycle = "normal";
         state.lastCompactAt = Date.now();
+        state.deepworkFileWritten = false;
         await sendPrompt(sessionID, "Deepwork file saved. Continue your work — the system will automatically compact your context when needed. After any compaction, read your deepwork progress file under `.slim/deepwork/` and continue exactly where you left off.", "compact-continue");
         return;
       }
@@ -24691,6 +24693,7 @@ function createDeepworkWakeupHook(client, options) {
         });
         state.compactCycle = "normal";
         state.lastCompactAt = Date.now();
+        state.deepworkFileWritten = false;
         await sendPrompt(sessionID, "Deepwork file saved. Continue your work — the system will automatically compact your context when needed. After any compaction, read your deepwork progress file under `.slim/deepwork/` and continue exactly where you left off.", "compact-continue");
         return;
       }
@@ -24710,6 +24713,7 @@ function createDeepworkWakeupHook(client, options) {
           const s = getState(sessionID);
           s.compactCycle = "normal";
           s.lastCompactAt = Date.now();
+          s.deepworkFileWritten = false;
           return;
         }
         log("[deepwork-wakeup] compaction triggered via session.summarize", {
@@ -24723,6 +24727,8 @@ function createDeepworkWakeupHook(client, options) {
         const s = getState(sessionID);
         s.compactCycle = "normal";
         s.lastCompactAt = Date.now();
+        s.deepworkFileWritten = false;
+        s.lastCompactAt = Date.now();
       });
       log("[deepwork-wakeup] session.summarize fired (not awaited)", {
         sessionID
@@ -24735,6 +24741,7 @@ function createDeepworkWakeupHook(client, options) {
       const state = getState(sessionID);
       state.compactCycle = "normal";
       state.lastCompactAt = Date.now();
+      state.deepworkFileWritten = false;
     }
   }
   async function runGate(sessionID, gate) {
@@ -25211,6 +25218,8 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
         exceeded: inputTokens >= contextThreshold
       });
       if (inputTokens >= contextThreshold) {
+        if (state.compactCycle !== "normal")
+          return;
         log("[deepwork-wakeup] context threshold exceeded (idle check), starting compact cycle", {
           sessionID,
           inputTokens,
@@ -25363,6 +25372,7 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
           const state = getState(sessionId);
           state.idle = false;
           state.lastBackgroundActivityAt = 0;
+          state.compactCycleSawBusy = true;
         }
         return;
       }
@@ -25375,37 +25385,36 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
           await checkContextThresholdOnIdle(sessionId);
         }
         if (state.compactCycle === "pendingWrite") {
-          log("[deepwork-wakeup] orchestrator idle, sending compact write prompt", {
-            sessionId
-          });
+          log("[deepwork-wakeup] orchestrator idle, sending compact write prompt", { sessionId });
           const sent = await sendPrompt(sessionId, COMPACT_WRITE_MESSAGE, "compact-write");
           if (sent) {
             state.compactCycle = "awaitingWrite";
+            state.compactCycleSawBusy = false;
           } else {
-            log("[deepwork-wakeup] compact write prompt not sent, will retry on next idle", {
-              sessionId
-            });
+            log("[deepwork-wakeup] compact write prompt not sent, will retry on next idle", { sessionId });
           }
           return;
         }
         if (state.compactCycle === "awaitingWrite") {
-          log("[deepwork-wakeup] orchestrator idle after write, triggering compaction", {
-            sessionId
-          });
+          if (!state.compactCycleSawBusy) {
+            return;
+          }
+          log("[deepwork-wakeup] orchestrator idle after write, triggering compaction", { sessionId });
           state.compactCycle = "compacting";
+          state.compactCycleSawBusy = false;
           await triggerCompaction(sessionId);
           return;
         }
         if (state.compactCycle === "awaitingRefresh") {
-          log("[deepwork-wakeup] orchestrator idle after refresh, completing compact cycle", {
-            sessionId
-          });
+          if (!state.compactCycleSawBusy) {
+            return;
+          }
+          log("[deepwork-wakeup] orchestrator idle after refresh, completing compact cycle", { sessionId });
           state.compactCycle = "normal";
           state.lastCompactAt = Date.now();
         }
         if (state.compactCycle === "compacting") {
-          state.compactCycle = "normal";
-          state.lastCompactAt = Date.now();
+          return;
         }
         if (!state.gate && !sessionsSeen.has(sessionId)) {
           const persisted = loadPersistedGate(directory, sessionId);

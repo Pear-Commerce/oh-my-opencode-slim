@@ -366,6 +366,12 @@ interface SessionWakeState {
    * this to decide whether to send the refresh prompt.
    */
   deepworkFileWritten: boolean;
+  /**
+   * Tracks whether the orchestrator went busy since the last compact
+   * cycle state transition. Guards against duplicate idle events
+   * advancing the cycle before work actually occurs.
+   */
+  compactCycleSawBusy: boolean;
 }
 
 export interface DeepworkWakeupOptions {
@@ -514,6 +520,7 @@ export function createDeepworkWakeupHook(
         lastCompactAt: 0,
         lastInputTokens: 0,
         deepworkFileWritten: false,
+        compactCycleSawBusy: false,
       };
       states.set(sessionID, s);
     }
@@ -778,6 +785,7 @@ export function createDeepworkWakeupHook(
         });
         state.compactCycle = 'normal';
         state.lastCompactAt = Date.now();
+        state.deepworkFileWritten = false;
         await sendPrompt(
           sessionID,
           'Deepwork file saved. Continue your work — the system will automatically compact your context when needed. After any compaction, read your deepwork progress file under `.slim/deepwork/` and continue exactly where you left off.',
@@ -809,6 +817,7 @@ export function createDeepworkWakeupHook(
         });
         state.compactCycle = 'normal';
         state.lastCompactAt = Date.now();
+        state.deepworkFileWritten = false;
         await sendPrompt(
           sessionID,
           'Deepwork file saved. Continue your work — the system will automatically compact your context when needed. After any compaction, read your deepwork progress file under `.slim/deepwork/` and continue exactly where you left off.',
@@ -837,6 +846,7 @@ export function createDeepworkWakeupHook(
             const s = getState(sessionID);
             s.compactCycle = 'normal';
             s.lastCompactAt = Date.now();
+            s.deepworkFileWritten = false;
             return;
           }
           log('[deepwork-wakeup] compaction triggered via session.summarize', {
@@ -850,6 +860,8 @@ export function createDeepworkWakeupHook(
           });
           const s = getState(sessionID);
           s.compactCycle = 'normal';
+          s.lastCompactAt = Date.now();
+          s.deepworkFileWritten = false;
           s.lastCompactAt = Date.now();
         });
 
@@ -866,7 +878,7 @@ export function createDeepworkWakeupHook(
       const state = getState(sessionID);
       state.compactCycle = 'normal';
       state.lastCompactAt = Date.now();
-      // Don't clear deepworkFileWritten — auto-compact may still fire
+      state.deepworkFileWritten = false;
     }
   }
 
@@ -1642,6 +1654,9 @@ export function createDeepworkWakeupHook(
       });
 
       if (inputTokens >= contextThreshold) {
+        // Re-check compactCycle — another event may have advanced the
+        // cycle while we were awaiting the messages() API call.
+        if (state.compactCycle !== 'normal') return;
         log(
           '[deepwork-wakeup] context threshold exceeded (idle check), starting compact cycle',
           {
@@ -1902,6 +1917,10 @@ export function createDeepworkWakeupHook(
           const state = getState(sessionId);
           state.idle = false;
           state.lastBackgroundActivityAt = 0;
+          // Track that the orchestrator went busy — guards against
+          // duplicate idle events advancing the compact cycle before
+          // work actually occurs.
+          state.compactCycleSawBusy = true;
         }
         return;
       }
@@ -1934,17 +1953,16 @@ export function createDeepworkWakeupHook(
         }
 
         // ── Context-compact cycle handling ──────────────────────────
-        // When the orchestrator goes idle after we detected high tokens
-        // (pendingWrite), send the write prompt. When it goes idle after
-        // writing to its deepwork file (awaitingWrite), trigger compaction.
-        // When it goes idle after reading the refresh prompt
-        // (awaitingRefresh), complete the cycle.
+        // Each state transition requires the orchestrator to have gone
+        // busy and come back idle (compactCycleSawBusy). This guards
+        // against duplicate idle events advancing the cycle before work
+        // actually occurs.
         if (state.compactCycle === 'pendingWrite') {
+          // pendingWrite is set by checkContextThresholdOnIdle — no
+          // busy transition needed for the first step.
           log(
             '[deepwork-wakeup] orchestrator idle, sending compact write prompt',
-            {
-              sessionId,
-            },
+            { sessionId },
           );
           const sent = await sendPrompt(
             sessionId,
@@ -1953,50 +1971,51 @@ export function createDeepworkWakeupHook(
           );
           if (sent) {
             state.compactCycle = 'awaitingWrite';
+            state.compactCycleSawBusy = false;
           } else {
-            // sendPrompt failed (wake in flight, dedup, etc.) — retry on
-            // next idle by keeping pendingWrite.
             log(
               '[deepwork-wakeup] compact write prompt not sent, will retry on next idle',
-              {
-                sessionId,
-              },
+              { sessionId },
             );
           }
-          return; // don't fire done-check/gate during compact cycle
+          return;
         }
         if (state.compactCycle === 'awaitingWrite') {
+          if (!state.compactCycleSawBusy) {
+            // Duplicate idle event — orchestrator hasn't processed the
+            // write prompt yet. Wait for it to go busy and come back.
+            return;
+          }
           log(
             '[deepwork-wakeup] orchestrator idle after write, triggering compaction',
-            {
-              sessionId,
-            },
+            { sessionId },
           );
           state.compactCycle = 'compacting';
+          state.compactCycleSawBusy = false;
           await triggerCompaction(sessionId);
-          return; // don't fire done-check/gate during compaction
+          return;
         }
         if (state.compactCycle === 'awaitingRefresh') {
+          if (!state.compactCycleSawBusy) {
+            // Duplicate idle event — orchestrator hasn't processed the
+            // refresh prompt yet. Wait for it to go busy and come back.
+            return;
+          }
           log(
             '[deepwork-wakeup] orchestrator idle after refresh, completing compact cycle',
-            {
-              sessionId,
-            },
+            { sessionId },
           );
           state.compactCycle = 'normal';
           state.lastCompactAt = Date.now();
-          // Fall through to normal idle handling — the orchestrator may
-          // have more work to do after refreshing its context.
+          // Fall through to normal idle handling
         }
-        // If compactCycle is 'compacting', triggerCompaction fired
-        // session.summarize() as fire-and-forget. The summarize call
-        // is running in the background. Reset compactCycle to normal
-        // but keep deepworkFileWritten=true so when session.compacted
-        // fires, the refresh prompt is sent. Fall through to normal
-        // idle handling.
+        // If compactCycle is 'compacting', session.summarize() was
+        // fired as fire-and-forget. Don't fall through to normal idle
+        // handling — wait for session.compacted event. If summarize
+        // failed, the .then/.catch handlers reset compactCycle to
+        // 'normal' and the next idle will resume normal flow.
         if (state.compactCycle === 'compacting') {
-          state.compactCycle = 'normal';
-          state.lastCompactAt = Date.now();
+          return;
         }
 
         // If this is the first time we've seen this session (after a

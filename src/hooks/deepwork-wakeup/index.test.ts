@@ -38,10 +38,11 @@ function makeClient(lastAssistantText = 'no') {
   const prompt = mock(async () => {});
   const abort = mock(async () => {});
   const command = mock(async () => ({}));
+  const summarize = mock(async () => new Promise<{ data: true }>(() => {}));
   const client = {
-    session: { promptAsync, messages, create, prompt, abort, command },
+    session: { promptAsync, messages, create, prompt, abort, command, summarize },
   } as unknown as Parameters<typeof createDeepworkWakeupHook>[0];
-  return { client, promptAsync, messages, create, prompt, abort, command };
+  return { client, promptAsync, messages, create, prompt, abort, command, summarize };
 }
 
 function idleEvent(sessionId: string) {
@@ -99,7 +100,7 @@ describe('deepwork-wakeup hook', () => {
       description: 'review',
     });
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -124,7 +125,7 @@ describe('deepwork-wakeup hook', () => {
       agent: 'oracle',
     });
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -143,7 +144,7 @@ describe('deepwork-wakeup hook', () => {
       agent: 'oracle',
     });
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -165,7 +166,7 @@ describe('deepwork-wakeup hook', () => {
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
     board.markReconciled('ses_ora1');
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -186,7 +187,7 @@ describe('deepwork-wakeup hook', () => {
     });
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -207,7 +208,7 @@ describe('deepwork-wakeup hook', () => {
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
     board.markReconciled('ses_ora1');
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -228,7 +229,7 @@ describe('deepwork-wakeup hook', () => {
       agent: 'oracle',
     });
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -248,7 +249,7 @@ describe('deepwork-wakeup hook', () => {
     });
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -272,7 +273,7 @@ describe('deepwork-wakeup hook', () => {
     });
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -297,7 +298,7 @@ describe('deepwork-wakeup hook', () => {
     });
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -323,7 +324,7 @@ describe('deepwork-wakeup hook', () => {
     });
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -336,7 +337,7 @@ describe('deepwork-wakeup hook', () => {
 
   test('ignores events without session id', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: () => true,
@@ -349,7 +350,7 @@ describe('deepwork-wakeup hook', () => {
 
   test('ignores idle on unknown background session (no board entry)', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: () => true,
@@ -555,7 +556,7 @@ describe('deepwork-wakeup hook', () => {
 
   test('periodic timer does not fire when orchestrator is busy', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -856,7 +857,7 @@ describe('deepwork-wakeup hook', () => {
     });
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -952,7 +953,7 @@ describe('deepwork-wakeup hook', () => {
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
     board.markReconciled('ses_ora1');
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -991,7 +992,7 @@ describe('deepwork-wakeup hook', () => {
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
     board.markReconciled('ses_ora1');
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -1029,7 +1030,7 @@ describe('deepwork-wakeup hook', () => {
     board.updateStatus({ taskID: 'ses_ora1', state: 'completed' });
     // NOT reconciled — terminalUnreconciled is true
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -1466,7 +1467,7 @@ describe('deepwork-wakeup hook', () => {
     });
     // job still running
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -1503,7 +1504,7 @@ describe('deepwork-wakeup hook', () => {
     const board = new BackgroundJobBoard();
     // No background tasks registered — board is empty
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -1538,7 +1539,7 @@ describe('deepwork-wakeup hook', () => {
     const dir = makeGitRepo();
     const board = new BackgroundJobBoard();
 
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
@@ -1820,12 +1821,12 @@ describe('deepwork-wakeup hook', () => {
 
   test('context-compact: sends write prompt when tokens exceed threshold', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
     });
 
     // message.updated sets state to 'pendingWrite' (does NOT send prompt yet)
@@ -1850,12 +1851,12 @@ describe('deepwork-wakeup hook', () => {
 
   test('context-compact: does not trigger when tokens are below threshold', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
     });
 
     await hook.event(messageUpdatedEvent('ses_orch', 350_000));
@@ -1867,12 +1868,12 @@ describe('deepwork-wakeup hook', () => {
 
   test('context-compact: does not trigger when cycle already in progress', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
     });
 
     // First event sets pendingWrite
@@ -1883,22 +1884,24 @@ describe('deepwork-wakeup hook', () => {
 
     // Second message.updated should not re-trigger (cycle in progress)
     await hook.event(messageUpdatedEvent('ses_orch', 500_000));
-    // Idle triggers compaction fallback (sends continue prompt)
+    // Busy + idle triggers compaction via summarize (not another write prompt)
+    await hook.event(busyEvent('ses_orch'));
     await hook.event(idleEvent('ses_orch'));
-    // 2 calls: write prompt + continue prompt (fallback)
-    expect(promptAsync).toHaveBeenCalledTimes(2);
+    // Still only 1 promptAsync call (write prompt). summarize was called.
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    expect(summarize).toHaveBeenCalled();
 
     hook._destroy();
   });
 
   test('context-compact: does not trigger during cooldown', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
       compactCooldownMs: 10_000,
     });
 
@@ -1923,12 +1926,12 @@ describe('deepwork-wakeup hook', () => {
 
   test('context-compact: triggers compaction on idle after write', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync, command } = makeClient();
+    const { client, promptAsync, command, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
     });
 
     // Start the compact cycle: message.updated → pendingWrite
@@ -1937,11 +1940,12 @@ describe('deepwork-wakeup hook', () => {
     await hook.event(idleEvent('ses_orch'));
     expect(promptAsync).toHaveBeenCalledTimes(1);
 
-    // Orchestrator goes idle after writing → trigger compaction
+    // Orchestrator processes write prompt, then goes idle → trigger compaction
+    await hook.event(busyEvent('ses_orch'));
     await hook.event(idleEvent('ses_orch'));
 
-    // Compaction should have been triggered via session.command
-    expect(promptAsync).toHaveBeenCalled();
+    // Compaction should have been triggered via session.summarize
+    expect(summarize).toHaveBeenCalled();
     
     
     
@@ -1956,20 +1960,22 @@ describe('deepwork-wakeup hook', () => {
 
   test('context-compact: sends refresh prompt after session.compacted', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync, command } = makeClient();
+    const { client, promptAsync, command, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
     });
 
     // Full cycle up to compaction
     await hook.event(messageUpdatedEvent('ses_orch', 450_000));
     await hook.event(idleEvent('ses_orch')); // send write prompt
-    await hook.event(idleEvent('ses_orch')); // trigger compaction (fallback sends continue)
+    await hook.event(busyEvent('ses_orch')); // orchestrator processes write prompt
+    await hook.event(idleEvent('ses_orch')); // trigger compaction via summarize
     const callsBeforeCompacted = promptAsync.mock.calls.length;
-    expect(callsBeforeCompacted).toBeGreaterThanOrEqual(2);
+    expect(callsBeforeCompacted).toBeGreaterThanOrEqual(1);
+    expect(summarize).toHaveBeenCalled();
 
     // session.compacted event → refresh prompt
     await hook.event(compactedEvent('ses_orch'));
@@ -1990,23 +1996,25 @@ describe('deepwork-wakeup hook', () => {
 
   test('context-compact: completes cycle on idle after refresh', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync, command } = makeClient();
+    const { client, promptAsync, command, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
     });
 
     // Full cycle: message.updated → idle (write) → idle (compact fallback) → compacted → idle (refresh) → idle (complete)
     await hook.event(messageUpdatedEvent('ses_orch', 450_000));
     await hook.event(idleEvent('ses_orch')); // send write prompt
+    await hook.event(busyEvent('ses_orch')); // orchestrator processes write prompt
     await hook.event(idleEvent('ses_orch')); // trigger compaction (fallback sends continue)
     await hook.event(compactedEvent('ses_orch')); // send refresh prompt
-    // 3 calls: write prompt + continue prompt (fallback) + refresh prompt
-    expect(promptAsync.mock.calls.length).toBeGreaterThanOrEqual(3);
+    // 2 calls: write prompt + refresh prompt (summarize is fire-and-forget)
+    expect(promptAsync.mock.calls.length).toBeGreaterThanOrEqual(2);
 
-    // Orchestrator goes idle after reading the deepwork file
+    // Orchestrator processes refresh prompt, then goes idle
+    await hook.event(busyEvent('ses_orch'));
     await hook.event(idleEvent('ses_orch'));
 
     const state = (
@@ -2022,12 +2030,12 @@ describe('deepwork-wakeup hook', () => {
 
   test('context-compact: suppresses done-check during compact cycle', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync, command } = makeClient();
+    const { client, promptAsync, command, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
       periodicDoneCheck: false,
     });
 
@@ -2045,25 +2053,24 @@ describe('deepwork-wakeup hook', () => {
       'deepwork',
     );
 
-    // Idle after write → trigger compaction fallback (sends continue, NOT done-check)
+    // Busy + idle after write → trigger compaction via summarize (NOT done-check)
+    await hook.event(busyEvent('ses_orch'));
     await hook.event(idleEvent('ses_orch'));
-    // 2 calls: write prompt + continue prompt (fallback). No done-check.
-    expect(promptAsync).toHaveBeenCalledTimes(2);
-    expect(promptAsync.mock.calls[1]?.[0].body.parts[0].text).toContain(
-      'Continue your work',
-    );
+    // Still only 1 promptAsync call (write prompt). summarize was called, no done-check.
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+    expect(summarize).toHaveBeenCalled();
 
     hook._destroy();
   });
 
   test('context-compact: ignores non-managed sessions', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
     });
 
     await hook.event(messageUpdatedEvent('ses_other', 450_000));
@@ -2075,12 +2082,12 @@ describe('deepwork-wakeup hook', () => {
 
   test('context-compact: ignores user messages (only assistant tokens)', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
     });
 
     // User message with high tokens — should be ignored
@@ -2111,7 +2118,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
     });
 
     const output: { context: string[]; prompt?: string } = { context: [] };
@@ -2130,7 +2137,7 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
     });
 
     const output: { context: string[]; prompt?: string } = { context: [] };
@@ -2143,12 +2150,12 @@ describe('deepwork-wakeup hook', () => {
 
   test('context-compact: cleans up state on session.deleted', async () => {
     const board = new BackgroundJobBoard();
-    const { client, promptAsync } = makeClient();
+    const { client, promptAsync, summarize } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
+      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
     });
 
     // Start compact cycle
