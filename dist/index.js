@@ -25233,6 +25233,16 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
   return {
     event: async (input) => {
       const event = input.event;
+      {
+        const dbgSessionId = event.properties?.info?.id ?? event.properties?.info?.sessionID ?? event.properties?.sessionID;
+        if (dbgSessionId && shouldManageSession(dbgSessionId)) {
+          log("[deepwork-wakeup] event received", {
+            type: event.type,
+            sessionId: dbgSessionId,
+            managesSession: true
+          });
+        }
+      }
       if (event.type === "message.updated") {
         const info = event.properties?.info;
         if (!info)

@@ -412,6 +412,16 @@ export interface DeepworkWakeupOptions {
    */
   hasPendingTaskCall?: (parentSessionID: string) => boolean;
   /**
+   * Async fallback for shouldManageSession. Called when the sync
+   * shouldManageSession returns false (e.g. after a restart when
+   * sessionAgentMap is empty). Queries the session's messages to find
+   * the agent name and checks if it's an orchestrator-class agent.
+   * Returns true if the session should be managed.
+   */
+  shouldManageSessionAsync?: (
+    sessionID: string,
+  ) => Promise<boolean>;
+  /**
    * Input-token threshold that triggers the auto-compact cycle. When the
    * orchestrator's input tokens exceed this value, the hook prompts it to
    * write to its deepwork file, then triggers compaction, then prompts it
@@ -1695,6 +1705,21 @@ export function createDeepworkWakeupHook(
       };
     }): Promise<void> => {
       const event = input.event;
+
+      // Debug: log every event for managed sessions to trace the flow
+      {
+        const dbgSessionId =
+          event.properties?.info?.id ??
+          event.properties?.info?.sessionID ??
+          event.properties?.sessionID;
+        if (dbgSessionId && shouldManageSession(dbgSessionId)) {
+          log('[deepwork-wakeup] event received', {
+            type: event.type,
+            sessionId: dbgSessionId,
+            managesSession: true,
+          });
+        }
+      }
 
       // ── Context-compact: handle message.updated for token tracking ──
       // This must be handled BEFORE the generic session ID extraction
