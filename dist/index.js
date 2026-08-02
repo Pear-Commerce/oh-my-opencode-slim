@@ -25156,6 +25156,39 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
       return null;
     }
   }
+  async function checkContextThresholdOnIdle(sessionID) {
+    const state = getState(sessionID);
+    if (state.compactCycle !== "normal")
+      return;
+    if (Date.now() - state.lastCompactAt < compactCooldownMs)
+      return;
+    try {
+      const MESSAGE_READ_TIMEOUT_MS = 1e4;
+      const result = await Promise.race([
+        client.session.messages({ path: { id: sessionID } }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("messages timed out")), MESSAGE_READ_TIMEOUT_MS))
+      ]);
+      const messages = result.data ?? [];
+      const lastAssistant = [...messages].reverse().find((m) => m.info?.role === "assistant" && typeof m.info?.tokens?.input === "number");
+      if (!lastAssistant)
+        return;
+      const inputTokens = lastAssistant.info.tokens.input;
+      state.lastInputTokens = inputTokens;
+      if (inputTokens >= contextThreshold) {
+        log("[deepwork-wakeup] context threshold exceeded (idle check), starting compact cycle", {
+          sessionID,
+          inputTokens,
+          threshold: contextThreshold
+        });
+        state.compactCycle = "pendingWrite";
+      }
+    } catch (err) {
+      log("[deepwork-wakeup] failed to check context threshold on idle", {
+        sessionID,
+        error: err instanceof Error ? err.message : String(err)
+      });
+    }
+  }
   async function handleDoneCheckResponse(sessionID) {
     const state = getState(sessionID);
     log("[deepwork-wakeup] handling done-check response", { sessionID });
@@ -25268,6 +25301,9 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
       if (shouldManageSession(sessionId)) {
         const state = getState(sessionId);
         state.idle = true;
+        if (state.compactCycle === "normal" && (hasHadBackgroundWork.has(sessionId) || state.gate) && !backgroundJobBoard.hasRunning(sessionId) && !backgroundJobBoard.hasTerminalUnreconciled(sessionId) && !state.awaitingDoneCheck && !state.wakeInFlight) {
+          await checkContextThresholdOnIdle(sessionId);
+        }
         if (state.compactCycle === "pendingWrite") {
           log("[deepwork-wakeup] orchestrator idle, sending compact write prompt", {
             sessionId

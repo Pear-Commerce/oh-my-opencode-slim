@@ -439,7 +439,9 @@ describe('deepwork-wakeup hook', () => {
     await hook.event(idleEvent('ses_orch'));
 
     // Should have read the response and sent continue prompt
-    expect(messages).toHaveBeenCalledTimes(1);
+    // messages() is called twice: once by checkContextThresholdOnIdle
+    // on the first idle, and once by handleDoneCheckResponse
+    expect(messages).toHaveBeenCalledTimes(2);
     expect(promptAsync).toHaveBeenCalledTimes(2);
     expect(promptAsync.mock.calls[1]?.[0].body.parts[0].text).toContain(
       'Continue',

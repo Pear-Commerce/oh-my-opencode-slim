@@ -1542,6 +1542,69 @@ export function createDeepworkWakeupHook(
   }
 
   /**
+   * Query the session's messages and check the last assistant message's
+   * input token count. If it exceeds the threshold, start the compact
+   * cycle. This is the primary trigger — message.updated events are not
+   * reliably emitted to plugins with token data.
+   */
+  async function checkContextThresholdOnIdle(
+    sessionID: string,
+  ): Promise<void> {
+    const state = getState(sessionID);
+    if (state.compactCycle !== 'normal') return;
+    if (Date.now() - state.lastCompactAt < compactCooldownMs) return;
+
+    try {
+      const MESSAGE_READ_TIMEOUT_MS = 10_000;
+      const result = await Promise.race([
+        client.session.messages({ path: { id: sessionID } }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('messages timed out')),
+            MESSAGE_READ_TIMEOUT_MS,
+          ),
+        ),
+      ]);
+      const messages = (result.data ?? []) as Array<{
+        info: {
+          role?: string;
+          tokens?: { input?: number };
+        };
+      }>;
+
+      // Find the last assistant message with token data
+      const lastAssistant = [...messages]
+        .reverse()
+        .find(
+          (m) =>
+            m.info?.role === 'assistant' &&
+            typeof m.info?.tokens?.input === 'number',
+        );
+      if (!lastAssistant) return;
+
+      const inputTokens = lastAssistant.info.tokens!.input!;
+      state.lastInputTokens = inputTokens;
+
+      if (inputTokens >= contextThreshold) {
+        log(
+          '[deepwork-wakeup] context threshold exceeded (idle check), starting compact cycle',
+          {
+            sessionID,
+            inputTokens,
+            threshold: contextThreshold,
+          },
+        );
+        state.compactCycle = 'pendingWrite';
+      }
+    } catch (err) {
+      log('[deepwork-wakeup] failed to check context threshold on idle', {
+        sessionID,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
    * Handle the orchestrator's done-check response.
    * Called when the orchestrator goes idle after a done-check was sent.
    */
@@ -1749,6 +1812,23 @@ export function createDeepworkWakeupHook(
       if (shouldManageSession(sessionId)) {
         const state = getState(sessionId);
         state.idle = true;
+
+        // ── Context-compact: check token threshold on idle ────────────
+        // message.updated events don't reliably carry token data to plugins,
+        // so the primary trigger is checking the last assistant message's
+        // token count when the orchestrator goes idle. Only check for
+        // deepwork sessions (has had background work or has a gate) to
+        // avoid querying messages for every regular chat session.
+        if (
+          state.compactCycle === 'normal' &&
+          (hasHadBackgroundWork.has(sessionId) || state.gate) &&
+          !backgroundJobBoard.hasRunning(sessionId) &&
+          !backgroundJobBoard.hasTerminalUnreconciled(sessionId) &&
+          !state.awaitingDoneCheck &&
+          !state.wakeInFlight
+        ) {
+          await checkContextThresholdOnIdle(sessionId);
+        }
 
         // ── Context-compact cycle handling ──────────────────────────
         // When the orchestrator goes idle after we detected high tokens
