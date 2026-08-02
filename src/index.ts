@@ -895,6 +895,22 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       deepworkCommandHook.registerCommand(opencodeConfig);
       reflectCommandHook.registerCommand(opencodeConfig);
       presetManager.registerCommand(opencodeConfig);
+
+      // Set compaction.reserved so auto-compact fires at ~400k tokens
+      // instead of waiting until the model's full context limit (1M+).
+      // The auto-compact threshold is: model_context_limit - reserved.
+      // With a 1M context model and reserved=600000, it fires at 400k.
+      // Only set if the user hasn't explicitly configured it.
+      const oc = opencodeConfig as {
+        compaction?: { reserved?: number };
+      };
+      if (!oc.compaction) {
+        oc.compaction = {};
+      }
+      if (oc.compaction.reserved === undefined) {
+        oc.compaction.reserved = 600_000;
+        log('[plugin] set compaction.reserved = 600000 (auto-compact at ~400k)');
+      }
     },
 
     event: async (input) => {

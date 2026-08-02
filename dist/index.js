@@ -24529,7 +24529,8 @@ function createDeepworkWakeupHook(client, options) {
         consultationQueuedAt: 0,
         compactCycle: "normal",
         lastCompactAt: 0,
-        lastInputTokens: 0
+        lastInputTokens: 0,
+        deepworkFileWritten: false
       };
       states.set(sessionID, s);
     }
@@ -24664,68 +24665,49 @@ function createDeepworkWakeupHook(client, options) {
   }
   async function triggerCompaction(sessionID) {
     try {
-      if (!serverUrl) {
-        log("[deepwork-wakeup] no serverUrl available, cannot trigger compaction", { sessionID });
-        const state = getState(sessionID);
-        state.compactCycle = "normal";
-        state.lastCompactAt = Date.now();
-        return;
-      }
-      const base = serverUrl.replace(/\/$/, "");
-      const url = `${base}/api/session/${sessionID}/compact`;
-      let sdkFetch;
-      let sdkHeaders = {};
+      log("[deepwork-wakeup] triggering compaction via tui.executeCommand", {
+        sessionID
+      });
+      const state = getState(sessionID);
+      state.deepworkFileWritten = true;
       try {
         const rawClient = client._client;
         if (rawClient) {
-          const config = rawClient.getConfig?.() ?? rawClient.config;
-          sdkFetch = config?.fetch;
-          sdkHeaders = config?.headers ?? {};
-        }
-      } catch {}
-      const fetchFn = sdkFetch ?? globalThis.fetch;
-      log("[deepwork-wakeup] triggering compaction via REST API", {
-        sessionID,
-        url,
-        hasSdkFetch: Boolean(sdkFetch),
-        headerKeys: Object.keys(sdkHeaders)
-      });
-      const controller = new AbortController;
-      const timeout = setTimeout(() => controller.abort(), 120000);
-      fetchFn(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...sdkHeaders
-        },
-        signal: controller.signal
-      }).then(async (resp) => {
-        clearTimeout(timeout);
-        if (!resp.ok) {
-          const body = await resp.text().catch(() => "");
-          log("[deepwork-wakeup] compaction REST API returned error", {
-            sessionID,
-            status: resp.status,
-            body: body.slice(0, 200)
+          const { OpencodeClient: V2Client } = await import("@opencode-ai/sdk/v2");
+          const v2 = new V2Client({ client: rawClient });
+          const result = await v2.tui.executeCommand({
+            command: "session.compact"
           });
-          const state = getState(sessionID);
-          state.compactCycle = "normal";
-          state.lastCompactAt = Date.now();
-        } else {
-          log("[deepwork-wakeup] compaction triggered via REST API", {
+          if ("error" in result && result.error) {
+            log("[deepwork-wakeup] tui.executeCommand returned error", {
+              sessionID,
+              error: String(result.error)
+            });
+            state.compactCycle = "normal";
+            state.lastCompactAt = Date.now();
+            state.deepworkFileWritten = false;
+            return;
+          }
+          log("[deepwork-wakeup] compaction triggered via tui.executeCommand", {
             sessionID
           });
+          return;
         }
-      }).catch((err) => {
-        clearTimeout(timeout);
-        log("[deepwork-wakeup] compaction REST API fetch failed", {
+      } catch (err) {
+        log("[deepwork-wakeup] v2 tui.executeCommand failed", {
           sessionID,
           error: err instanceof Error ? err.message : String(err)
         });
-        const state = getState(sessionID);
-        state.compactCycle = "normal";
-        state.lastCompactAt = Date.now();
-      });
+      }
+      log("[deepwork-wakeup] falling back to continue prompt", { sessionID });
+      state.compactCycle = "normal";
+      state.lastCompactAt = Date.now();
+      const sent = await sendPrompt(sessionID, "Deepwork file saved. Continue your work — the system will automatically compact your context when needed. After any compaction, read your deepwork progress file under `.slim/deepwork/` and continue exactly where you left off.", "compact-continue");
+      if (!sent) {
+        log("[deepwork-wakeup] failed to send compact-continue prompt", {
+          sessionID
+        });
+      }
     } catch (err) {
       log("[deepwork-wakeup] failed to trigger compaction", {
         sessionID,
@@ -25311,17 +25293,41 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
         if (!shouldManageSession(compactedSessionId))
           return;
         const state = getState(compactedSessionId);
-        if (state.compactCycle === "compacting") {
+        if (state.deepworkFileWritten) {
           const timer = compactFallbackTimers.get(compactedSessionId);
           if (timer) {
             clearTimeout(timer);
             compactFallbackTimers.delete(compactedSessionId);
           }
+          state.deepworkFileWritten = false;
           log("[deepwork-wakeup] compaction complete, sending refresh prompt", {
             sessionId: compactedSessionId
           });
           state.compactCycle = "awaitingRefresh";
-          await sendPrompt(compactedSessionId, COMPACT_REFRESH_MESSAGE, "compact-refresh");
+          try {
+            const sessionClient = client.session;
+            const model = await resolveModel?.(compactedSessionId);
+            if (typeof sessionClient.promptAsync === "function") {
+              await sessionClient.promptAsync({
+                path: { id: compactedSessionId },
+                body: {
+                  parts: [{ type: "text", text: COMPACT_REFRESH_MESSAGE }],
+                  ...model ? {
+                    model,
+                    ...model.agent ? { agent: model.agent } : {}
+                  } : {}
+                }
+              });
+              log("[deepwork-wakeup] refresh prompt sent via promptAsync", {
+                sessionId: compactedSessionId
+              });
+            }
+          } catch (err) {
+            log("[deepwork-wakeup] failed to send refresh prompt", {
+              sessionId: compactedSessionId,
+              error: err instanceof Error ? err.message : String(err)
+            });
+          }
         }
         return;
       }
@@ -25389,7 +25395,11 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
           state.lastCompactAt = Date.now();
         }
         if (state.compactCycle === "compacting") {
-          return;
+          log("[deepwork-wakeup] orchestrator idle during compacting without session.compacted, resetting", {
+            sessionId
+          });
+          state.compactCycle = "normal";
+          state.lastCompactAt = Date.now();
         }
         if (!state.gate && !sessionsSeen.has(sessionId)) {
           const persisted = loadPersistedGate(directory, sessionId);
@@ -25522,7 +25532,7 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
     compacting: async (input, output) => {
       if (!shouldManageSession(input.sessionID))
         return;
-      output.context.push("The orchestrator maintains a deepwork progress file under `.slim/deepwork/`. " + "After compaction, the orchestrator will re-read this file to restore its " + "full working context. Preserve any references to deepwork file paths, " + "active phase status, file references, and key decisions in the summary. " + "The deepwork file itself is NOT part of the context — it is an external " + "file the orchestrator reads after compaction.");
+      output.context.push("The orchestrator maintains a deepwork progress file under `.slim/deepwork/`. After compaction, the orchestrator will re-read this file to restore its full working context. Preserve any references to deepwork file paths, active phase status, file references, and key decisions in the summary. " + "The deepwork file itself is NOT part of the context — it is an external " + "file the orchestrator reads after compaction.");
       log("[deepwork-wakeup] injected deepwork context into compaction prompt", {
         sessionID: input.sessionID
       });
@@ -36958,6 +36968,14 @@ var OhMyOpenCodeLite = async (ctx) => {
       deepworkCommandHook.registerCommand(opencodeConfig);
       reflectCommandHook.registerCommand(opencodeConfig);
       presetManager.registerCommand(opencodeConfig);
+      const oc = opencodeConfig;
+      if (!oc.compaction) {
+        oc.compaction = {};
+      }
+      if (oc.compaction.reserved === undefined) {
+        oc.compaction.reserved = 600000;
+        log("[plugin] set compaction.reserved = 600000 (auto-compact at ~400k)");
+      }
     },
     event: async (input) => {
       const event = input.event;

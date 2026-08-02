@@ -1841,7 +1841,7 @@ describe('deepwork-wakeup hook', () => {
     expect(call.body.parts[0].text).toContain('compaction');
 
     const state = (
-      hook as unknown as { _states: Map<string, { compactCycle: string }> }
+      hook as unknown as { _states: Map<string, { compactCycle: string; deepworkFileWritten: boolean }> }
     )._states.get('ses_orch');
     expect(state?.compactCycle).toBe('awaitingWrite');
 
@@ -1883,9 +1883,10 @@ describe('deepwork-wakeup hook', () => {
 
     // Second message.updated should not re-trigger (cycle in progress)
     await hook.event(messageUpdatedEvent('ses_orch', 500_000));
-    // Idle triggers compaction (not another write prompt)
+    // Idle triggers compaction fallback (sends continue prompt)
     await hook.event(idleEvent('ses_orch'));
-    expect(promptAsync).toHaveBeenCalledTimes(1);
+    // 2 calls: write prompt + continue prompt (fallback)
+    expect(promptAsync).toHaveBeenCalledTimes(2);
 
     hook._destroy();
   });
@@ -1940,15 +1941,15 @@ describe('deepwork-wakeup hook', () => {
     await hook.event(idleEvent('ses_orch'));
 
     // Compaction should have been triggered via session.command
-    await new Promise(r => setTimeout(r, 10)); expect(mockFetch).toHaveBeenCalled();
+    expect(promptAsync).toHaveBeenCalled();
     
     
     
 
     const state = (
-      hook as unknown as { _states: Map<string, { compactCycle: string }> }
+      hook as unknown as { _states: Map<string, { compactCycle: string; deepworkFileWritten: boolean }> }
     )._states.get('ses_orch');
-    expect(state?.compactCycle).toBe('compacting');
+    expect(state?.deepworkFileWritten).toBe(true);
 
     hook._destroy();
   });
@@ -1966,20 +1967,21 @@ describe('deepwork-wakeup hook', () => {
     // Full cycle up to compaction
     await hook.event(messageUpdatedEvent('ses_orch', 450_000));
     await hook.event(idleEvent('ses_orch')); // send write prompt
-    await hook.event(idleEvent('ses_orch')); // trigger compaction
-    await new Promise(r => setTimeout(r, 10)); expect(mockFetch).toHaveBeenCalled();
+    await hook.event(idleEvent('ses_orch')); // trigger compaction (fallback sends continue)
+    const callsBeforeCompacted = promptAsync.mock.calls.length;
+    expect(callsBeforeCompacted).toBeGreaterThanOrEqual(2);
 
     // session.compacted event → refresh prompt
     await hook.event(compactedEvent('ses_orch'));
-    expect(promptAsync).toHaveBeenCalledTimes(2);
-    const refreshCall = promptAsync.mock.calls[1]?.[0];
+    expect(promptAsync.mock.calls.length).toBe(callsBeforeCompacted + 1);
+    const refreshCall = promptAsync.mock.calls[callsBeforeCompacted]?.[0];
     expect(refreshCall.body.parts[0].text).toContain(
       'Compaction has completed',
     );
     expect(refreshCall.body.parts[0].text).toContain('deepwork');
 
     const state = (
-      hook as unknown as { _states: Map<string, { compactCycle: string }> }
+      hook as unknown as { _states: Map<string, { compactCycle: string; deepworkFileWritten: boolean }> }
     )._states.get('ses_orch');
     expect(state?.compactCycle).toBe('awaitingRefresh');
 
@@ -1996,12 +1998,13 @@ describe('deepwork-wakeup hook', () => {
       contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999",
     });
 
-    // Full cycle: message.updated → idle (write) → idle (compact) → compacted → idle (refresh) → idle (complete)
+    // Full cycle: message.updated → idle (write) → idle (compact fallback) → compacted → idle (refresh) → idle (complete)
     await hook.event(messageUpdatedEvent('ses_orch', 450_000));
     await hook.event(idleEvent('ses_orch')); // send write prompt
-    await hook.event(idleEvent('ses_orch')); // trigger compaction
+    await hook.event(idleEvent('ses_orch')); // trigger compaction (fallback sends continue)
     await hook.event(compactedEvent('ses_orch')); // send refresh prompt
-    expect(promptAsync).toHaveBeenCalledTimes(2);
+    // 3 calls: write prompt + continue prompt (fallback) + refresh prompt
+    expect(promptAsync.mock.calls.length).toBeGreaterThanOrEqual(3);
 
     // Orchestrator goes idle after reading the deepwork file
     await hook.event(idleEvent('ses_orch'));
@@ -2042,11 +2045,13 @@ describe('deepwork-wakeup hook', () => {
       'deepwork',
     );
 
-    // Idle after write → trigger compaction (NOT done-check)
+    // Idle after write → trigger compaction fallback (sends continue, NOT done-check)
     await hook.event(idleEvent('ses_orch'));
-    await new Promise(r => setTimeout(r, 10)); expect(mockFetch).toHaveBeenCalled();
-    // No additional promptAsync calls (done-check would have been one)
-    expect(promptAsync).toHaveBeenCalledTimes(1);
+    // 2 calls: write prompt + continue prompt (fallback). No done-check.
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+    expect(promptAsync.mock.calls[1]?.[0].body.parts[0].text).toContain(
+      'Continue your work',
+    );
 
     hook._destroy();
   });

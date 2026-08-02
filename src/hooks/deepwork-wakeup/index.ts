@@ -356,6 +356,12 @@ interface SessionWakeState {
    * changed.
    */
   lastInputTokens: number;
+  /**
+   * True after the orchestrator has written its deepwork file as part
+   * of a compact cycle. When session.compacted fires, the handler checks
+   * this to decide whether to send the refresh prompt.
+   */
+  deepworkFileWritten: boolean;
 }
 
 export interface DeepworkWakeupOptions {
@@ -503,6 +509,7 @@ export function createDeepworkWakeupHook(
         compactCycle: 'normal',
         lastCompactAt: 0,
         lastInputTokens: 0,
+        deepworkFileWritten: false,
       };
       states.set(sessionID, s);
     }
@@ -732,106 +739,83 @@ export function createDeepworkWakeupHook(
   /**
    * Trigger session compaction via the OpenCode session.command API.
    *
-   * Calls the OpenCode REST API directly:
-   * POST /api/session/:sessionID/compact
+   * Triggers compaction via the v2 SDK's tui.executeCommand API.
    *
-   * The session.command API is broken (returns 200 but fails server-side
-   * with UnknownError). The v1 SDK doesn't expose the compact endpoint.
-   * But the REST endpoint exists in the OpenCode server and works.
+   * The v2 session.compact REST endpoint is a stub (always returns
+   * OperationUnavailableError). But the TUI command "session.compact"
+   * triggers the real compaction flow — same as pressing the keybinding
+   * in the TUI.
    *
-   * Uses the SDK client's internal _client which already has auth
-   * headers configured (same approach as magic-compact plugin).
+   * We use the v2 SDK client (created from input.client._client, same
+   * approach as magic-compact) to call tui.executeCommand.
    */
   async function triggerCompaction(sessionID: string): Promise<void> {
     try {
-      if (!serverUrl) {
-        log(
-          '[deepwork-wakeup] no serverUrl available, cannot trigger compaction',
-          { sessionID },
-        );
-        const state = getState(sessionID);
-        state.compactCycle = 'normal';
-        state.lastCompactAt = Date.now();
-        return;
-      }
-
-      // Build the REST URL: POST /api/session/:sessionID/compact
-      const base = serverUrl.replace(/\/$/, '');
-      const url = `${base}/api/session/${sessionID}/compact`;
-
-      // Get the SDK client's internal fetch and config which already
-      // has the right baseUrl, headers, and auth configured. The SDK
-      // client (input.client) wraps a lower-level HTTP client that
-      // works without explicit auth (it's running in-process).
-      // Same approach as magic-compact: input.client["_client"]
-      let sdkFetch: typeof fetch | undefined;
-      let sdkHeaders: Record<string, string> = {};
-      try {
-        const rawClient = (client as unknown as {
-          _client?: {
-            getConfig?: () => { fetch?: typeof fetch; headers?: Record<string, string> };
-            config?: { fetch?: typeof fetch; headers?: Record<string, string> };
-          };
-        })._client;
-        if (rawClient) {
-          const config = rawClient.getConfig?.() ?? rawClient.config;
-          sdkFetch = config?.fetch;
-          sdkHeaders = config?.headers ?? {};
-        }
-      } catch {
-        // _client structure may vary across SDK versions — try best effort
-      }
-
-      const fetchFn = sdkFetch ?? globalThis.fetch;
-
-      log('[deepwork-wakeup] triggering compaction via REST API', {
+      log('[deepwork-wakeup] triggering compaction via tui.executeCommand', {
         sessionID,
-        url,
-        hasSdkFetch: Boolean(sdkFetch),
-        headerKeys: Object.keys(sdkHeaders),
       });
 
-      // Fire-and-forget with a 2-minute timeout. The session.compacted
-      // event handler picks up from here when compaction completes.
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 120_000);
-      fetchFn(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...sdkHeaders,
-        },
-        signal: controller.signal,
-      })
-        .then(async (resp) => {
-          clearTimeout(timeout);
-          if (!resp.ok) {
-            const body = await resp.text().catch(() => '');
-            log('[deepwork-wakeup] compaction REST API returned error', {
+      // Mark that the deepwork file was written so the session.compacted
+      // handler knows to send the refresh prompt.
+      const state = getState(sessionID);
+      state.deepworkFileWritten = true;
+
+      // Try the v2 SDK's tui.executeCommand — this executes the TUI
+      // "session.compact" command, which triggers the real compaction.
+      try {
+        // Create a v2 client from the plugin's client (same approach
+        // as magic-compact: input.client["_client"])
+        const rawClient = (client as unknown as { _client?: unknown })._client;
+        if (rawClient) {
+          // Dynamically import the v2 SDK to avoid dependency issues
+          const { OpencodeClient: V2Client } = await import(
+            '@opencode-ai/sdk/v2'
+          );
+          const v2 = new V2Client({ client: rawClient as never });
+
+          const result = await v2.tui.executeCommand({
+            command: 'session.compact',
+          });
+
+          if ('error' in result && result.error) {
+            log('[deepwork-wakeup] tui.executeCommand returned error', {
               sessionID,
-              status: resp.status,
-              body: body.slice(0, 200),
+              error: String(result.error),
             });
-            // Reset so the cycle can retry later
-            const state = getState(sessionID);
+            // Reset on failure
             state.compactCycle = 'normal';
             state.lastCompactAt = Date.now();
-          } else {
-            log('[deepwork-wakeup] compaction triggered via REST API', {
-              sessionID,
-            });
+            state.deepworkFileWritten = false;
+            return;
           }
-        })
-        .catch((err) => {
-          clearTimeout(timeout);
-          log('[deepwork-wakeup] compaction REST API fetch failed', {
+
+          log('[deepwork-wakeup] compaction triggered via tui.executeCommand', {
             sessionID,
-            error: err instanceof Error ? err.message : String(err),
           });
-          const state = getState(sessionID);
-          state.compactCycle = 'normal';
-          state.lastCompactAt = Date.now();
+          return;
+        }
+      } catch (err) {
+        log('[deepwork-wakeup] v2 tui.executeCommand failed', {
+          sessionID,
+          error: err instanceof Error ? err.message : String(err),
         });
+      }
+
+      // Fallback: send a continue prompt. Auto-compact will fire
+      // naturally when the context overflows the model's limit.
+      log('[deepwork-wakeup] falling back to continue prompt', { sessionID });
+      state.compactCycle = 'normal';
+      state.lastCompactAt = Date.now();
+      const sent = await sendPrompt(
+        sessionID,
+        'Deepwork file saved. Continue your work — the system will automatically compact your context when needed. After any compaction, read your deepwork progress file under `.slim/deepwork/` and continue exactly where you left off.',
+        'compact-continue',
+      );
+      if (!sent) {
+        log('[deepwork-wakeup] failed to send compact-continue prompt', {
+          sessionID,
+        });
+      }
     } catch (err) {
       log('[deepwork-wakeup] failed to trigger compaction', {
         sessionID,
@@ -1795,13 +1779,14 @@ export function createDeepworkWakeupHook(
         if (!compactedSessionId) return;
         if (!shouldManageSession(compactedSessionId)) return;
         const state = getState(compactedSessionId);
-        if (state.compactCycle === 'compacting') {
+        if (state.deepworkFileWritten) {
           // Clear the fallback timer — compaction succeeded
           const timer = compactFallbackTimers.get(compactedSessionId);
           if (timer) {
             clearTimeout(timer);
             compactFallbackTimers.delete(compactedSessionId);
           }
+          state.deepworkFileWritten = false;
           log(
             '[deepwork-wakeup] compaction complete, sending refresh prompt',
             {
@@ -1809,13 +1794,45 @@ export function createDeepworkWakeupHook(
             },
           );
           state.compactCycle = 'awaitingRefresh';
-          // Send the refresh prompt — the orchestrator re-reads its
-          // deepwork file and continues.
-          await sendPrompt(
-            compactedSessionId,
-            COMPACT_REFRESH_MESSAGE,
-            'compact-refresh',
-          );
+          // Send directly via promptAsync — the orchestrator may not be
+          // idle yet (session.compacted fires during the agent loop).
+          // The prompt is queued and the orchestrator sees it after
+          // the current turn completes.
+          try {
+            const sessionClient = client.session as unknown as {
+              promptAsync?: (args: {
+                path: { id: string };
+                body: {
+                  parts: Array<{ type: 'text'; text: string }>;
+                  model?: { providerID: string; modelID: string };
+                  agent?: string;
+                };
+              }) => Promise<unknown>;
+            };
+            const model = await resolveModel?.(compactedSessionId);
+            if (typeof sessionClient.promptAsync === 'function') {
+              await sessionClient.promptAsync({
+                path: { id: compactedSessionId },
+                body: {
+                  parts: [{ type: 'text', text: COMPACT_REFRESH_MESSAGE }],
+                  ...(model
+                    ? {
+                        model,
+                        ...(model.agent ? { agent: model.agent } : {}),
+                      }
+                    : {}),
+                },
+              });
+              log('[deepwork-wakeup] refresh prompt sent via promptAsync', {
+                sessionId: compactedSessionId,
+              });
+            }
+          } catch (err) {
+            log('[deepwork-wakeup] failed to send refresh prompt', {
+              sessionId: compactedSessionId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
         }
         return;
       }
@@ -1941,9 +1958,17 @@ export function createDeepworkWakeupHook(
           // Fall through to normal idle handling — the orchestrator may
           // have more work to do after refreshing its context.
         }
-        // Suppress done-check/gate while compaction is in progress
+        // Suppress done-check/gate while compaction is in progress.
+        // But if the orchestrator went idle without a session.compacted
+        // event, the auto-compact didn't fire (context wasn't over the
+        // model's limit). Reset to normal so the cycle can retry later.
         if (state.compactCycle === 'compacting') {
-          return;
+          log('[deepwork-wakeup] orchestrator idle during compacting without session.compacted, resetting', {
+            sessionId,
+          });
+          state.compactCycle = 'normal';
+          state.lastCompactAt = Date.now();
+          // Fall through to normal idle handling
         }
 
         // If this is the first time we've seen this session (after a
