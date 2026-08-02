@@ -24477,6 +24477,13 @@ var COMPACT_REFRESH_MESSAGE = [
   "to continue."
 ].join(`
 `);
+var COMPACT_MANUAL_MESSAGE = [
+  "Automatic compaction could not be triggered. Your context is very large",
+  "and needs to be compacted. Please ask the user to run `/compact` manually",
+  "in the TUI. After compaction completes, read your deepwork progress file",
+  "under `.slim/deepwork/` and continue exactly where you left off."
+].join(`
+`);
 function createDeepworkWakeupHook(client, options) {
   const {
     backgroundJobBoard,
@@ -24663,8 +24670,10 @@ function createDeepworkWakeupHook(client, options) {
           const state2 = getState(sessionID);
           if (state2.compactCycle !== "compacting")
             return;
-          log("[deepwork-wakeup] session.compacted not received within 30s, falling back to promptAsync /compact", { sessionID });
-          triggerCompactionViaPrompt(sessionID, sessionClient, model).catch(() => {});
+          log("[deepwork-wakeup] session.compacted not received within 30s, asking user to compact manually", { sessionID });
+          state2.compactCycle = "normal";
+          state2.lastCompactAt = Date.now();
+          sendPrompt(sessionID, COMPACT_MANUAL_MESSAGE, "compact-manual").catch(() => {});
         }, COMPACT_FALLBACK_TIMEOUT_MS));
         sessionClient.command({
           path: { id: sessionID },
@@ -24681,7 +24690,7 @@ function createDeepworkWakeupHook(client, options) {
             sessionID
           });
         }).catch(async (err) => {
-          log("[deepwork-wakeup] session.command failed, falling back to promptAsync /compact", {
+          log("[deepwork-wakeup] session.command failed, asking user to compact manually", {
             sessionID,
             error: err instanceof Error ? err.message : String(err)
           });
@@ -24690,7 +24699,10 @@ function createDeepworkWakeupHook(client, options) {
             clearTimeout(timer);
             compactFallbackTimers.delete(sessionID);
           }
-          await triggerCompactionViaPrompt(sessionID, sessionClient, model);
+          const state2 = getState(sessionID);
+          state2.compactCycle = "normal";
+          state2.lastCompactAt = Date.now();
+          await sendPrompt(sessionID, COMPACT_MANUAL_MESSAGE, "compact-manual");
         });
         return;
       }

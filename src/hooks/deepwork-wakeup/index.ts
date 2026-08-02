@@ -219,6 +219,13 @@ const COMPACT_REFRESH_MESSAGE = [
   'to continue.',
 ].join('\n');
 
+const COMPACT_MANUAL_MESSAGE = [
+  'Automatic compaction could not be triggered. Your context is very large',
+  'and needs to be compacted. Please ask the user to run `/compact` manually',
+  'in the TUI. After compaction completes, read your deepwork progress file',
+  'under `.slim/deepwork/` and continue exactly where you left off.',
+].join('\n');
+
 /**
  * Loop gate — replaces the model yes/no done-check with a machine-checkable
  * termination condition for convergence loops ("get this passable according
@@ -757,19 +764,28 @@ export function createDeepworkWakeupHook(
         const existingTimer = compactFallbackTimers.get(sessionID);
         if (existingTimer) clearTimeout(existingTimer);
 
-        // Set fallback timer
+        // Set fallback timer — if session.compacted doesn't fire within
+        // 30s, the session.command API silently swallowed the command
+        // (happens with very large sessions). promptAsync with /compact
+        // doesn't work either — it sends as a regular message, not a
+        // command. So we tell the orchestrator to ask the user to run
+        // /compact manually.
         compactFallbackTimers.set(
           sessionID,
           setTimeout(() => {
             const state = getState(sessionID);
             if (state.compactCycle !== 'compacting') return; // already handled
             log(
-              '[deepwork-wakeup] session.compacted not received within 30s, falling back to promptAsync /compact',
+              '[deepwork-wakeup] session.compacted not received within 30s, asking user to compact manually',
               { sessionID },
             );
-            triggerCompactionViaPrompt(sessionID, sessionClient, model).catch(
-              () => {},
-            );
+            state.compactCycle = 'normal';
+            state.lastCompactAt = Date.now();
+            sendPrompt(
+              sessionID,
+              COMPACT_MANUAL_MESSAGE,
+              'compact-manual',
+            ).catch(() => {});
           }, COMPACT_FALLBACK_TIMEOUT_MS),
         );
 
@@ -794,24 +810,25 @@ export function createDeepworkWakeupHook(
           })
           .catch(async (err) => {
             log(
-              '[deepwork-wakeup] session.command failed, falling back to promptAsync /compact',
+              '[deepwork-wakeup] session.command failed, asking user to compact manually',
               {
                 sessionID,
                 error: err instanceof Error ? err.message : String(err),
               },
             );
-            // Clear the fallback timer — we're falling back now
+            // Clear the fallback timer — we're handling now
             const timer = compactFallbackTimers.get(sessionID);
             if (timer) {
               clearTimeout(timer);
               compactFallbackTimers.delete(sessionID);
             }
-            // Fallback: send "/compact" as a promptAsync message.
-            // The orchestrator will execute the /compact command itself.
-            await triggerCompactionViaPrompt(
+            const state = getState(sessionID);
+            state.compactCycle = 'normal';
+            state.lastCompactAt = Date.now();
+            await sendPrompt(
               sessionID,
-              sessionClient,
-              model,
+              COMPACT_MANUAL_MESSAGE,
+              'compact-manual',
             );
           });
         return;
