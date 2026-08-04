@@ -27,7 +27,7 @@
         "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
-        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       },
@@ -38,7 +38,7 @@
         "mcps": []
       },
       "fixer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash",
+        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       }
@@ -68,7 +68,7 @@
         "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
-        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       },
@@ -79,7 +79,7 @@
         "mcps": []
       },
       "fixer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash",
+        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       }
@@ -109,7 +109,7 @@
         "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
-        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       },
@@ -120,7 +120,7 @@
         "mcps": []
       },
       "fixer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash",
+        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       }
@@ -150,7 +150,7 @@
         "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
-        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       },
@@ -161,7 +161,7 @@
         "mcps": []
       },
       "fixer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash",
+        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       }
@@ -190,7 +190,7 @@
         "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
-        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       },
@@ -201,7 +201,7 @@
         "mcps": []
       },
       "fixer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash",
+        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       }
