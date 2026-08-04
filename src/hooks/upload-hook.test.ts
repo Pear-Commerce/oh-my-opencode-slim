@@ -74,6 +74,8 @@ describe('processFileAttachments', () => {
     expect(text).toContain('pic.png');
     expect(text).toMatch(/image bytes were removed/);
     expect(text).toMatch(/subagent/);
+    expect(text).toMatch(/delegate to a vision-capable agent/);
+    expect(text).toMatch(/do not tell the user you cannot see/);
 
     // File actually written to disk under the session subdir.
     const sessionDir = join(workDir, '.opencode', 'uploads', 'test-session-1');

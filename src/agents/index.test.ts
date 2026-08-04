@@ -407,6 +407,34 @@ describe('createAgents', () => {
   });
 });
 
+describe('orchestrator prompt image delegation', () => {
+  test('contains image delegation instruction with observer and designer fallback', () => {
+    const agents = createAgents();
+    const orchestrator = agents.find((a) => a.name === 'orchestrator');
+    const prompt = orchestrator?.config.prompt ?? '';
+
+    expect(prompt).toContain('Image Delegation');
+    expect(prompt).toContain('@observer');
+    expect(prompt).toContain('@designer');
+    expect(prompt).toMatch(/I can't see images/);
+    expect(prompt).toMatch(/NEVER/);
+  });
+
+  test('image delegation section present even when observer is disabled', () => {
+    const agents = createAgents({ disabled_agents: ['observer'] });
+    const orchestrator = agents.find((a) => a.name === 'orchestrator');
+    const prompt = orchestrator?.config.prompt ?? '';
+
+    // The Image Delegation section is always present (not filtered by
+    // disabledAgents) so the orchestrator knows to fall back to @designer.
+    expect(prompt).toContain('Image Delegation');
+    expect(prompt).toContain('@designer');
+    // @observer agent description is filtered out, but the image delegation
+    // section still mentions @observer as an option "if available".
+    expect(prompt).toContain('@observer');
+  });
+});
+
 describe('getAgentConfigs', () => {
   test('returns config record keyed by agent name', () => {
     const configs = getAgentConfigs();

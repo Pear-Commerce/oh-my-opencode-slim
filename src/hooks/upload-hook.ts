@@ -216,7 +216,7 @@ function buildInjectionText(files: SavedFile[]): string {
   const lines = files.map((f) => {
     const base = `[File uploaded: ${f.filename}. Saved to: ${f.diskPath}. When delegating to subagents, include this path in the delegation prompt so the subagent can read the file with its read tool.]`;
     if (f.isImage) {
-      return `${base} Note: the image bytes were removed because your model may not support image input.`;
+      return `${base} Note: the image bytes were removed because your model may not support image input. You MUST delegate to a vision-capable agent to describe this image before responding — do not tell the user you cannot see it.`;
     }
     return base;
   });

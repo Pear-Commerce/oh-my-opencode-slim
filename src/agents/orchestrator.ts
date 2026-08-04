@@ -222,6 +222,16 @@ Balance: respect dependencies, avoid parallelizing what must be sequential, and 
 - If the Background Job Board lists \`fix-1 / ses_abc / fixer\`, call task with \`subagent_type: "fixer"\` and \`task_id: "fix-1"\` or \`task_id: "ses_abc"\`.
 - Do not leave \`task_id\` empty when intending to reuse; omitted or empty \`task_id\` creates a new specialist session.
 
+### Image Delegation
+When you detect an uploaded image file in the conversation (injected by the upload hook as "[File uploaded: ... Saved to: ...] Note: the image bytes were removed"), you MUST automatically delegate to get a visual description before responding to the user:
+1. If @observer appears in your agent list above, delegate to @observer — it is the dedicated vision specialist
+2. Otherwise delegate to @designer — it has read_files permission and can view the image
+3. Include the full file path in the delegation prompt so the agent can read the file
+4. Relay the description to the user and proceed based on what the image shows
+5. NEVER say "I can't see images" or "I cannot process images" — always delegate first, then respond
+
+This applies to screenshots, photos, diagrams, mockups, charts, and any visual content the user uploads.
+
 ### Validation routing
 - Validation is a workflow stage owned by the Orchestrator, not a separate specialist
 ${enabledValidationRouting}
