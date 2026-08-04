@@ -29,6 +29,8 @@ import {
   createFilterAvailableSkillsHook,
   createFixerReviewHook,
   createJsonErrorRecoveryHook,
+  clearLoopState,
+  createLoopGuardHook,
   createPhaseReminderHook,
   createPostFileToolNudgeHook,
   createReflectCommandHook,
@@ -161,6 +163,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
   let delegateTaskRetryHook: ReturnType<typeof createDelegateTaskRetryHook>;
   let applyPatchHook: ReturnType<typeof createApplyPatchHook>;
   let jsonErrorRecoveryHook: ReturnType<typeof createJsonErrorRecoveryHook>;
+  let loopGuardHook: ReturnType<typeof createLoopGuardHook>;
   let foregroundFallback: ForegroundFallbackManager;
   let deepworkCommandHook: ReturnType<typeof createDeepworkCommandHook>;
   let deepworkWakeupHook: ReturnType<typeof createDeepworkWakeupHook>;
@@ -321,6 +324,12 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     applyPatchHook = createApplyPatchHook(ctx);
     // Initialize JSON parse error recovery hook
     jsonErrorRecoveryHook = createJsonErrorRecoveryHook(ctx);
+
+    // Loop guard: detects repeated identical tool calls and breaks the
+    // cycle by nudging (3x) then withholding the repeated content (5x).
+    // Operates at the tool-output level — no permission ask, works with
+    // `permission: "allow"` and headless/autonomous setups.
+    loopGuardHook = createLoopGuardHook();
 
     // Initialize foreground fallback manager for runtime model switching
     foregroundFallback = new ForegroundFallbackManager(
@@ -1037,6 +1046,8 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           // Clear any stashed council results for this session to avoid
           // stale entries lingering after the session is gone.
           councilManager?.clearStash(sessionID);
+          // Clear loop-guard state for this session
+          clearLoopState(sessionID);
         }
       }
     },
@@ -1075,6 +1086,13 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       // Capture fixer task calls for auto-oracle-review on non-trivial diffs
       await fixerReviewHook['tool.execute.before'](
         input as { tool: string; callID?: string; sessionID?: string },
+        output as { args?: unknown },
+      );
+
+      // Loop guard: fingerprint the call in before (has args), inject
+      // nudge/interrupt in after (can modify output). Keyed by callID.
+      await loopGuardHook['tool.execute.before'](
+        input as { tool: string; sessionID?: string; callID?: string },
         output as { args?: unknown },
       );
     },
@@ -1298,6 +1316,20 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
             output: unknown;
             metadata: unknown;
           },
+        ),
+      );
+
+      // Loop guard: nudge at 3x, withhold content at 5x identical calls.
+      // Must run before other after-hooks so the withheld output doesn't
+      // get further decorated (the interrupt replaces output entirely).
+      await runPostToolHook('loop-guard', () =>
+        loopGuardHook['tool.execute.after'](
+          input as {
+            tool: string;
+            sessionID?: string;
+            callID?: string;
+          },
+          output as { output?: unknown },
         ),
       );
 

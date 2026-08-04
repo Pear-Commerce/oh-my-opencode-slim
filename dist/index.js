@@ -18479,9 +18479,9 @@ var DEFAULT_MODELS = {
   orchestrator: undefined,
   oracle: "openai/gpt-5.5",
   librarian: "openai/gpt-5.4-mini",
-  explorer: "openai/gpt-5.4-mini",
+  explorer: "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
   designer: "openai/gpt-5.4-mini",
-  fixer: "openai/gpt-5.4-mini",
+  fixer: "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
   observer: "openai/gpt-5.4-mini",
   council: "openai/gpt-5.4-mini",
   councillor: "openai/gpt-5.4-mini"
