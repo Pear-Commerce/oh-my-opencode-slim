@@ -37,6 +37,9 @@ export interface BackgroundJobBoardOptions {
   maxReusablePerAgent?: number;
   readContextMinLines?: number;
   readContextMaxFiles?: number;
+  /** Reusable sessions older than this (ms since lastUsedAt) are hidden from
+   *  the prompt and eligible for eviction. Default: 120000 (2 minutes). */
+  staleReusableMs?: number;
 }
 
 export interface BackgroundJobLaunchInput {
