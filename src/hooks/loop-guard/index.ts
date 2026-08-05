@@ -38,7 +38,8 @@ const HARD_THRESHOLD = 5;
 const WINDOW_SIZE = 20;
 
 const LOOP_NUDGE_MARKER = '[LOOP DETECTED — STOP REPEATING THIS CALL]';
-const LOOP_INTERRUPT_MARKER = '[LOOP INTERRUPT — repeated identical call suppressed]';
+const LOOP_INTERRUPT_MARKER =
+  '[LOOP INTERRUPT — repeated identical call suppressed]';
 
 // --- State ---
 

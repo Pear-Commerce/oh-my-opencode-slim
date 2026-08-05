@@ -19363,6 +19363,16 @@ Balance: respect dependencies, avoid parallelizing what must be sequential, and 
 - If the Background Job Board lists \`fix-1 / ses_abc / fixer\`, call task with \`subagent_type: "fixer"\` and \`task_id: "fix-1"\` or \`task_id: "ses_abc"\`.
 - Do not leave \`task_id\` empty when intending to reuse; omitted or empty \`task_id\` creates a new specialist session.
 
+### Image Delegation
+When you detect an uploaded image file in the conversation (injected by the upload hook as "[File uploaded: ... Saved to: ...] Note: the image bytes were removed"), you MUST automatically delegate to get a visual description before responding to the user:
+1. If @observer appears in your agent list above, delegate to @observer — it is the dedicated vision specialist
+2. Otherwise delegate to @designer — it has read_files permission and can view the image
+3. Include the full file path in the delegation prompt so the agent can read the file
+4. Relay the description to the user and proceed based on what the image shows
+5. NEVER say "I can't see images" or "I cannot process images" — always delegate first, then respond
+
+This applies to screenshots, photos, diagrams, mockups, charts, and any visual content the user uploads.
+
 ### Validation routing
 - Validation is a workflow stage owned by the Orchestrator, not a separate specialist
 ${enabledValidationRouting}
@@ -26305,6 +26315,124 @@ ${JSON_ERROR_REMINDER}`;
     }
   };
 }
+// src/hooks/loop-guard/index.ts
+var WARN_THRESHOLD = 3;
+var HARD_THRESHOLD = 5;
+var WINDOW_SIZE = 20;
+var LOOP_NUDGE_MARKER = "[LOOP DETECTED — STOP REPEATING THIS CALL]";
+var LOOP_INTERRUPT_MARKER = "[LOOP INTERRUPT — repeated identical call suppressed]";
+var bySession = new Map;
+var pending = new Map;
+function fingerprint(tool, args) {
+  const toolKey = tool.toLowerCase();
+  const argsKey = stableStringify(args);
+  return `${toolKey}:${argsKey}`;
+}
+function stableStringify(value) {
+  if (value === null || value === undefined)
+    return "null";
+  if (typeof value !== "object")
+    return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const obj = value;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
+}
+function describeCall(tool, args) {
+  const toolName = tool.toLowerCase();
+  if (typeof args !== "object" || args === null) {
+    return `\`${toolName}\``;
+  }
+  const obj = args;
+  const parts = [`\`${toolName}\``];
+  const filePath = obj.filePath ?? obj.path ?? obj.file_path;
+  if (typeof filePath === "string")
+    parts.push(`filePath=${filePath}`);
+  const offset = obj.offset ?? obj.start_line ?? obj.line;
+  if (offset !== undefined)
+    parts.push(`offset=${offset}`);
+  const limit = obj.limit ?? obj.count ?? obj.end_line;
+  if (limit !== undefined)
+    parts.push(`limit=${limit}`);
+  const command = obj.command ?? obj.cmd;
+  if (typeof command === "string") {
+    parts.push(`command=${command.slice(0, 80)}`);
+  }
+  const pattern = obj.pattern ?? obj.regex;
+  if (typeof pattern === "string") {
+    parts.push(`pattern=${pattern.slice(0, 80)}`);
+  }
+  return parts.join(", ");
+}
+function nudgeText(count, description) {
+  return `
+
+${LOOP_NUDGE_MARKER}
+You have issued this exact ${description} ${count} times recently.
+The result is identical every time and is already in your context. Repeating it changes nothing.
+Do NOT issue this call again. Choose ONE:
+  1. Act on what you already have (edit / write / run a different command).
+  2. Inspect a DIFFERENT file, location, or pattern.
+  3. If you are blocked, state the blocker plainly and return your final answer.`;
+}
+function interruptText(count, description) {
+  return `${LOOP_INTERRUPT_MARKER}
+This is the ${count}th occurrence of ${description}. The content is UNCHANGED from the
+copies already in your context, so it has been withheld to break the loop you are stuck in.
+You are repeating the same actions without making progress. Change strategy NOW:
+  - Take a concrete action based on what you have already seen, OR
+  - Explain what is blocking you and return your final answer.
+Do not repeat this call — you will keep getting this message, not the result.`;
+}
+function createLoopGuardHook() {
+  return {
+    "tool.execute.before": async (input, output) => {
+      const { sessionID, callID } = input;
+      if (!sessionID || !callID)
+        return;
+      const fp = fingerprint(input.tool, output.args);
+      const desc = describeCall(input.tool, output.args);
+      let state = bySession.get(sessionID);
+      if (!state) {
+        state = { window: [] };
+        bySession.set(sessionID, state);
+      }
+      state.window.push({ fingerprint: fp, description: desc });
+      if (state.window.length > WINDOW_SIZE) {
+        state.window.shift();
+      }
+      const count = state.window.filter((entry) => entry.fingerprint === fp).length;
+      if (count >= WARN_THRESHOLD) {
+        pending.set(callID, { fingerprint: fp, count, description: desc });
+      }
+    },
+    "tool.execute.after": async (input, output) => {
+      const { callID } = input;
+      if (!callID)
+        return;
+      const hit = pending.get(callID);
+      if (!hit)
+        return;
+      pending.delete(callID);
+      if (typeof output.output !== "string")
+        return;
+      if (output.output.includes(LOOP_NUDGE_MARKER))
+        return;
+      if (output.output.includes(LOOP_INTERRUPT_MARKER))
+        return;
+      if (hit.count >= HARD_THRESHOLD) {
+        output.output = interruptText(hit.count, hit.description);
+      } else {
+        output.output += nudgeText(hit.count, hit.description);
+      }
+    }
+  };
+}
+function clearLoopState(sessionID) {
+  bySession.delete(sessionID);
+}
 // src/hooks/phase-reminder/index.ts
 function createPhaseReminderHook() {
   return {
@@ -26538,16 +26666,16 @@ function createTaskSessionManagerHook(_ctx, options) {
       contextByTask.set(taskId, context);
     }
     for (const file of files) {
-      const pending = context.get(file.path) ?? {
+      const pending2 = context.get(file.path) ?? {
         path: file.path,
         lines: new Set,
         lastReadAt: file.lastReadAt
       };
       for (const line of file.lineNumbers ?? []) {
-        pending.lines.add(line);
+        pending2.lines.add(line);
       }
-      pending.lastReadAt = Math.max(pending.lastReadAt, file.lastReadAt);
-      context.set(file.path, pending);
+      pending2.lastReadAt = Math.max(pending2.lastReadAt, file.lastReadAt);
+      context.set(file.path, pending2);
     }
     backgroundJobBoard.addContext(taskId, contextFilesForPrompt(context));
   }
@@ -26708,13 +26836,13 @@ function createTaskSessionManagerHook(_ctx, options) {
     const resolvedCallId = callId ?? firstPendingCallForParent(parentSessionId);
     if (!resolvedCallId)
       return;
-    const pending = pendingCalls.get(resolvedCallId);
+    const pending2 = pendingCalls.get(resolvedCallId);
     pendingCalls.delete(resolvedCallId);
     const orderIndex = pendingCallOrder.indexOf(resolvedCallId);
     if (orderIndex >= 0) {
       pendingCallOrder.splice(orderIndex, 1);
     }
-    return pending;
+    return pending2;
   }
   function firstPendingCallForParent(parentSessionId) {
     if (!parentSessionId)
@@ -26842,17 +26970,17 @@ function createTaskSessionManagerHook(_ctx, options) {
       }
       if (input.tool.toLowerCase() !== "task")
         return;
-      const pending = takePendingCall(input.callID, input.sessionID);
-      if (!pending || typeof output.output !== "string")
+      const pending2 = takePendingCall(input.callID, input.sessionID);
+      if (!pending2 || typeof output.output !== "string")
         return;
       const launch = parseTaskLaunchOutput(output.output);
       if (launch && !launch.result?.match(/Timed out after \d+ms/i)) {
         const record = backgroundJobBoard.registerLaunch({
           taskID: launch.taskID,
-          parentSessionID: pending.parentSessionId,
-          agent: pending.agentType,
-          description: pending.label,
-          objective: pending.label
+          parentSessionID: pending2.parentSessionId,
+          agent: pending2.agentType,
+          description: pending2.label,
+          objective: pending2.label
         });
         log("[task-session-manager] background task launch registered", {
           taskID: record.taskID,
@@ -26872,10 +27000,10 @@ function createTaskSessionManagerHook(_ctx, options) {
         const existing = backgroundJobBoard.get(status.taskID);
         const record = existing ?? backgroundJobBoard.registerLaunch({
           taskID: status.taskID,
-          parentSessionID: pending.parentSessionId,
-          agent: pending.agentType,
-          description: pending.label,
-          objective: pending.label
+          parentSessionID: pending2.parentSessionId,
+          agent: pending2.agentType,
+          description: pending2.label,
+          objective: pending2.label
         });
         const updated = backgroundJobBoard.updateStatus({
           taskID: status.taskID,
@@ -26886,12 +27014,12 @@ function createTaskSessionManagerHook(_ctx, options) {
         log("[task-session-manager] foreground task status registered", {
           taskID: status.taskID,
           alias: updated?.alias ?? record.alias,
-          parentSessionID: pending.parentSessionId,
-          agent: pending.agentType,
+          parentSessionID: pending2.parentSessionId,
+          agent: pending2.agentType,
           state: updated?.state ?? record.state
         });
-        if (pending.resumedTaskId && pending.resumedTaskId !== status.taskID) {
-          backgroundJobBoard.drop(pending.resumedTaskId);
+        if (pending2.resumedTaskId && pending2.resumedTaskId !== status.taskID) {
+          backgroundJobBoard.drop(pending2.resumedTaskId);
         }
         pendingManagedTaskIds.delete(status.taskID);
         const contextFiles2 = contextFilesForPrompt(contextByTask.get(status.taskID));
@@ -26901,13 +27029,13 @@ function createTaskSessionManagerHook(_ctx, options) {
       }
       const taskId = parseTaskIdFromTaskOutput(output.output);
       if (!taskId) {
-        if (pending.resumedTaskId && isMissingRememberedSessionError(output.output)) {
-          backgroundJobBoard.drop(pending.resumedTaskId);
+        if (pending2.resumedTaskId && isMissingRememberedSessionError(output.output)) {
+          backgroundJobBoard.drop(pending2.resumedTaskId);
         }
         return;
       }
-      if (pending.resumedTaskId && pending.resumedTaskId !== taskId) {
-        backgroundJobBoard.drop(pending.resumedTaskId);
+      if (pending2.resumedTaskId && pending2.resumedTaskId !== taskId) {
+        backgroundJobBoard.drop(pending2.resumedTaskId);
       }
       pendingManagedTaskIds.delete(taskId);
       const contextFiles = contextFilesForPrompt(contextByTask.get(taskId));
@@ -27038,16 +27166,16 @@ function createTaskSessionManagerHook(_ctx, options) {
       contextByTask.delete(sessionId);
       pendingManagedTaskIds.delete(sessionId);
       pruneContext();
-      for (const [callId, pending] of pendingCalls.entries()) {
-        if (pending.parentSessionId !== sessionId) {
+      for (const [callId, pending2] of pendingCalls.entries()) {
+        if (pending2.parentSessionId !== sessionId) {
           continue;
         }
         takePendingCall(callId);
       }
     },
     hasPendingTaskCall(parentSessionID) {
-      for (const pending of pendingCalls.values()) {
-        if (pending.parentSessionId === parentSessionID)
+      for (const pending2 of pendingCalls.values()) {
+        if (pending2.parentSessionId === parentSessionID)
           return true;
       }
       return false;
@@ -27248,7 +27376,7 @@ function buildInjectionText(files) {
   const lines = files.map((f) => {
     const base = `[File uploaded: ${f.filename}. Saved to: ${f.diskPath}. When delegating to subagents, include this path in the delegation prompt so the subagent can read the file with its read tool.]`;
     if (f.isImage) {
-      return `${base} Note: the image bytes were removed because your model may not support image input.`;
+      return `${base} Note: the image bytes were removed because your model may not support image input. You MUST delegate to a vision-capable agent to describe this image before responding — do not tell the user you cannot see it.`;
     }
     return base;
   });
@@ -31053,13 +31181,13 @@ function createInterviewManager(ctx, config) {
             await pollPendingAnswers(sessionID);
             await pollNudgeAction(sessionID);
           } else if (interviewId && dashboard) {
-            const pending = dashboard.consumePendingAnswers(interviewId);
-            if (pending && pending.length > 0) {
+            const pending2 = dashboard.consumePendingAnswers(interviewId);
+            if (pending2 && pending2.length > 0) {
               log("[interview] delivering pending answers (in-process)", {
                 interviewId,
-                count: pending.length
+                count: pending2.length
               });
-              await service.submitAnswers(interviewId, pending);
+              await service.submitAnswers(interviewId, pending2);
             }
             const nudge = dashboard.consumeNudgeAction(interviewId);
             if (nudge) {
@@ -32509,15 +32637,15 @@ class AcpClient {
       return;
     }
     if ("id" in message && (("result" in message) || ("error" in message))) {
-      const pending = this.pending.get(message.id);
-      if (!pending)
+      const pending2 = this.pending.get(message.id);
+      if (!pending2)
         return;
       this.pending.delete(message.id);
       if (message.error) {
-        pending.reject(rpcError(message.error));
+        pending2.reject(rpcError(message.error));
         return;
       }
-      pending.resolve(message.result);
+      pending2.resolve(message.result);
       return;
     }
     if ("id" in message && "method" in message) {
@@ -36541,6 +36669,7 @@ var OhMyOpenCodeLite = async (ctx) => {
   let delegateTaskRetryHook;
   let applyPatchHook;
   let jsonErrorRecoveryHook;
+  let loopGuardHook;
   let foregroundFallback;
   let deepworkCommandHook;
   let deepworkWakeupHook;
@@ -36630,6 +36759,7 @@ var OhMyOpenCodeLite = async (ctx) => {
     delegateTaskRetryHook = createDelegateTaskRetryHook(ctx);
     applyPatchHook = createApplyPatchHook(ctx);
     jsonErrorRecoveryHook = createJsonErrorRecoveryHook(ctx);
+    loopGuardHook = createLoopGuardHook();
     foregroundFallback = new ForegroundFallbackManager(ctx.client, runtimeChains, config.fallback?.enabled !== false && Object.keys(runtimeChains).length > 0);
     deepworkCommandHook = createDeepworkCommandHook();
     reflectCommandHook = createReflectCommandHook();
@@ -37043,6 +37173,7 @@ var OhMyOpenCodeLite = async (ctx) => {
           sessionAgentMap.delete(sessionID);
           childToParent.delete(sessionID);
           councilManager?.clearStash(sessionID);
+          clearLoopState(sessionID);
         }
       }
     },
@@ -37053,6 +37184,7 @@ var OhMyOpenCodeLite = async (ctx) => {
         await councilDetailsHook["tool.execute.before"](input, output);
       }
       await fixerReviewHook["tool.execute.before"](input, output);
+      await loopGuardHook["tool.execute.before"](input, output);
     },
     "command.execute.before": async (input, output) => {
       await interviewManager.handleCommandExecuteBefore(input, output);
@@ -37132,6 +37264,7 @@ ${output.system[0]}` : "");
       };
       await runPostToolHook("delegate-task-retry", () => delegateTaskRetryHook["tool.execute.after"](input, output));
       await runPostToolHook("json-error-recovery", () => jsonErrorRecoveryHook["tool.execute.after"](input, output));
+      await runPostToolHook("loop-guard", () => loopGuardHook["tool.execute.after"](input, output));
       await runPostToolHook("post-file-tool-nudge", () => postFileToolNudgeHook["tool.execute.after"](input, output));
       await runPostToolHook("task-session-manager", () => taskSessionManagerHook["tool.execute.after"](input, output));
       if (councilDetailsHook) {

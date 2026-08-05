@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import {
-  clearLoopState,
-  createLoopGuardHook,
-  _internals,
-} from './index';
+import { _internals, clearLoopState, createLoopGuardHook } from './index';
 
 const {
   reset,
@@ -28,10 +24,7 @@ describe('loop-guard', () => {
     callID: string,
     args: unknown,
   ): Promise<void> => {
-    await hook['tool.execute.before'](
-      { tool, sessionID, callID },
-      { args },
-    );
+    await hook['tool.execute.before']({ tool, sessionID, callID }, { args });
   };
 
   const callAfter = async (
@@ -41,10 +34,7 @@ describe('loop-guard', () => {
     output: string,
   ): Promise<string> => {
     const out = { output };
-    await hook['tool.execute.after'](
-      { tool, sessionID, callID },
-      out,
-    );
+    await hook['tool.execute.after']({ tool, sessionID, callID }, out);
     return typeof out.output === 'string' ? out.output : '';
   };
 
@@ -69,7 +59,13 @@ describe('loop-guard', () => {
   test('no intervention below warn threshold', async () => {
     const sid = 's1';
     for (let i = 1; i < WARN_THRESHOLD; i++) {
-      const result = await callTool('read', sid, `c${i}`, readArgs, 'file content here');
+      const result = await callTool(
+        'read',
+        sid,
+        `c${i}`,
+        readArgs,
+        'file content here',
+      );
       expect(result).toBe('file content here');
       expect(result).not.toContain(LOOP_NUDGE_MARKER);
     }
@@ -80,7 +76,13 @@ describe('loop-guard', () => {
     for (let i = 1; i < WARN_THRESHOLD; i++) {
       await callTool('read', sid, `c${i}`, readArgs, 'file content');
     }
-    const result = await callTool('read', sid, `c${WARN_THRESHOLD}`, readArgs, 'file content');
+    const result = await callTool(
+      'read',
+      sid,
+      `c${WARN_THRESHOLD}`,
+      readArgs,
+      'file content',
+    );
     expect(result).toContain('file content');
     expect(result).toContain(LOOP_NUDGE_MARKER);
     expect(result).toContain('3 times');
@@ -91,7 +93,13 @@ describe('loop-guard', () => {
     for (let i = 1; i < HARD_THRESHOLD; i++) {
       await callTool('read', sid, `c${i}`, readArgs, 'file content');
     }
-    const result = await callTool('read', sid, `c${HARD_THRESHOLD}`, readArgs, 'file content');
+    const result = await callTool(
+      'read',
+      sid,
+      `c${HARD_THRESHOLD}`,
+      readArgs,
+      'file content',
+    );
     expect(result).not.toContain('file content');
     expect(result).toContain(LOOP_INTERRUPT_MARKER);
     expect(result).toContain('5th');
@@ -104,11 +112,17 @@ describe('loop-guard', () => {
       await callTool('read', sid, `c${i}`, readArgs, 'content');
     }
     // Different tool (edit) — adds a different fingerprint to window
-    await callTool('edit', sid, 'ce1', {
-      filePath: '/test/file.ts',
-      oldString: 'a',
-      newString: 'b',
-    }, 'Edit applied');
+    await callTool(
+      'edit',
+      sid,
+      'ce1',
+      {
+        filePath: '/test/file.ts',
+        oldString: 'a',
+        newString: 'b',
+      },
+      'Edit applied',
+    );
 
     // Read again — count is now 3 in window of 4, but the edit diluted
     // so it takes more reads to reach threshold
@@ -122,19 +136,31 @@ describe('loop-guard', () => {
     // read → edit → read (different offset) → edit → read (different offset)
     // Realistic: each read checks a different section after editing
     for (let cycle = 0; cycle < 5; cycle++) {
-      const r = await callTool('read', sid, `r${cycle}`, {
-        filePath: '/test/file.ts',
-        offset: 1 + cycle * 50,
-        limit: 50,
-      }, 'content');
+      const r = await callTool(
+        'read',
+        sid,
+        `r${cycle}`,
+        {
+          filePath: '/test/file.ts',
+          offset: 1 + cycle * 50,
+          limit: 50,
+        },
+        'content',
+      );
       expect(r).not.toContain(LOOP_INTERRUPT_MARKER);
       expect(r).not.toContain(LOOP_NUDGE_MARKER);
 
-      const e = await callTool('edit', sid, `e${cycle}`, {
-        filePath: '/test/file.ts',
-        oldString: `old-${cycle}`,
-        newString: `new-${cycle}`,
-      }, 'Edit applied');
+      const e = await callTool(
+        'edit',
+        sid,
+        `e${cycle}`,
+        {
+          filePath: '/test/file.ts',
+          oldString: `old-${cycle}`,
+          newString: `new-${cycle}`,
+        },
+        'Edit applied',
+      );
       expect(e).not.toContain(LOOP_NUDGE_MARKER);
     }
   });
@@ -142,11 +168,29 @@ describe('loop-guard', () => {
   test('different args on same tool does not trigger', async () => {
     const sid = 's6';
     // read offset=690
-    await callTool('read', sid, 'c1', { ...readArgs, offset: 690 }, 'content A');
+    await callTool(
+      'read',
+      sid,
+      'c1',
+      { ...readArgs, offset: 690 },
+      'content A',
+    );
     // read offset=100 — different fingerprint
-    await callTool('read', sid, 'c2', { ...readArgs, offset: 100 }, 'content B');
+    await callTool(
+      'read',
+      sid,
+      'c2',
+      { ...readArgs, offset: 100 },
+      'content B',
+    );
     // read offset=200 — different fingerprint
-    await callTool('read', sid, 'c3', { ...readArgs, offset: 200 }, 'content C');
+    await callTool(
+      'read',
+      sid,
+      'c3',
+      { ...readArgs, offset: 200 },
+      'content C',
+    );
     // None should trigger — all different fingerprints
     // (each appears only once in window)
   });
@@ -199,7 +243,13 @@ describe('loop-guard', () => {
       await callTool('read', sid, `c${i}`, readArgs, 'content');
     }
     const preMarked = `content\n${LOOP_NUDGE_MARKER}\nold nudge`;
-    const result = await callTool('read', sid, `c${WARN_THRESHOLD}`, readArgs, preMarked);
+    const result = await callTool(
+      'read',
+      sid,
+      `c${WARN_THRESHOLD}`,
+      readArgs,
+      preMarked,
+    );
     const markerCount = result.split(LOOP_NUDGE_MARKER).length - 1;
     expect(markerCount).toBe(1);
   });
@@ -231,7 +281,13 @@ describe('loop-guard', () => {
   test('escalation continues past hard threshold', async () => {
     const sid = 's12';
     for (let i = 1; i <= HARD_THRESHOLD + 3; i++) {
-      const result = await callTool('read', sid, `c${i}`, readArgs, 'file content');
+      const result = await callTool(
+        'read',
+        sid,
+        `c${i}`,
+        readArgs,
+        'file content',
+      );
       if (i >= HARD_THRESHOLD) {
         expect(result).toContain(LOOP_INTERRUPT_MARKER);
         expect(result).not.toContain('file content');
@@ -320,11 +376,17 @@ describe('loop-guard', () => {
     const sid = 's17';
     // Read 10 different files — each fingerprint appears once
     for (let i = 1; i <= 10; i++) {
-      const result = await callTool('read', sid, `c${i}`, {
-        filePath: `/test/file${i}.ts`,
-        offset: 1,
-        limit: 50,
-      }, 'content');
+      const result = await callTool(
+        'read',
+        sid,
+        `c${i}`,
+        {
+          filePath: `/test/file${i}.ts`,
+          offset: 1,
+          limit: 50,
+        },
+        'content',
+      );
       expect(result).not.toContain(LOOP_NUDGE_MARKER);
       expect(result).not.toContain(LOOP_INTERRUPT_MARKER);
     }

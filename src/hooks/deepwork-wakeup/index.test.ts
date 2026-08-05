@@ -13,6 +13,7 @@ const mockFetch = mock(async (url: string, init?: RequestInit) =>
   } as Response),
 );
 globalThis.fetch = mockFetch as typeof fetch;
+
 import { BackgroundJobBoard } from '../../utils/background-job-board';
 import {
   createDeepworkWakeupHook,
@@ -40,9 +41,26 @@ function makeClient(lastAssistantText = 'no') {
   const command = mock(async () => ({}));
   const summarize = mock(async () => new Promise<{ data: true }>(() => {}));
   const client = {
-    session: { promptAsync, messages, create, prompt, abort, command, summarize },
+    session: {
+      promptAsync,
+      messages,
+      create,
+      prompt,
+      abort,
+      command,
+      summarize,
+    },
   } as unknown as Parameters<typeof createDeepworkWakeupHook>[0];
-  return { client, promptAsync, messages, create, prompt, abort, command, summarize };
+  return {
+    client,
+    promptAsync,
+    messages,
+    create,
+    prompt,
+    abort,
+    command,
+    summarize,
+  };
 }
 
 function idleEvent(sessionId: string) {
@@ -1826,7 +1844,9 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
+      contextThreshold: 400_000,
+      serverUrl: 'http://127.0.0.1:9999',
+      resolveModel: async () => ({ providerID: 'test', modelID: 'test' }),
     });
 
     // message.updated sets state to 'pendingWrite' (does NOT send prompt yet)
@@ -1842,7 +1862,12 @@ describe('deepwork-wakeup hook', () => {
     expect(call.body.parts[0].text).toContain('compaction');
 
     const state = (
-      hook as unknown as { _states: Map<string, { compactCycle: string; deepworkFileWritten: boolean }> }
+      hook as unknown as {
+        _states: Map<
+          string,
+          { compactCycle: string; deepworkFileWritten: boolean }
+        >;
+      }
     )._states.get('ses_orch');
     expect(state?.compactCycle).toBe('awaitingWrite');
 
@@ -1856,7 +1881,9 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
+      contextThreshold: 400_000,
+      serverUrl: 'http://127.0.0.1:9999',
+      resolveModel: async () => ({ providerID: 'test', modelID: 'test' }),
     });
 
     await hook.event(messageUpdatedEvent('ses_orch', 350_000));
@@ -1873,7 +1900,9 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
+      contextThreshold: 400_000,
+      serverUrl: 'http://127.0.0.1:9999',
+      resolveModel: async () => ({ providerID: 'test', modelID: 'test' }),
     });
 
     // First event sets pendingWrite
@@ -1901,7 +1930,9 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
+      contextThreshold: 400_000,
+      serverUrl: 'http://127.0.0.1:9999',
+      resolveModel: async () => ({ providerID: 'test', modelID: 'test' }),
       compactCooldownMs: 10_000,
     });
 
@@ -1931,7 +1962,9 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
+      contextThreshold: 400_000,
+      serverUrl: 'http://127.0.0.1:9999',
+      resolveModel: async () => ({ providerID: 'test', modelID: 'test' }),
     });
 
     // Start the compact cycle: message.updated → pendingWrite
@@ -1946,12 +1979,14 @@ describe('deepwork-wakeup hook', () => {
 
     // Compaction should have been triggered via session.summarize
     expect(summarize).toHaveBeenCalled();
-    
-    
-    
 
     const state = (
-      hook as unknown as { _states: Map<string, { compactCycle: string; deepworkFileWritten: boolean }> }
+      hook as unknown as {
+        _states: Map<
+          string,
+          { compactCycle: string; deepworkFileWritten: boolean }
+        >;
+      }
     )._states.get('ses_orch');
     expect(state?.deepworkFileWritten).toBe(true);
 
@@ -1965,7 +2000,9 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
+      contextThreshold: 400_000,
+      serverUrl: 'http://127.0.0.1:9999',
+      resolveModel: async () => ({ providerID: 'test', modelID: 'test' }),
     });
 
     // Full cycle up to compaction
@@ -1987,7 +2024,12 @@ describe('deepwork-wakeup hook', () => {
     expect(refreshCall.body.parts[0].text).toContain('deepwork');
 
     const state = (
-      hook as unknown as { _states: Map<string, { compactCycle: string; deepworkFileWritten: boolean }> }
+      hook as unknown as {
+        _states: Map<
+          string,
+          { compactCycle: string; deepworkFileWritten: boolean }
+        >;
+      }
     )._states.get('ses_orch');
     expect(state?.compactCycle).toBe('awaitingRefresh');
 
@@ -2001,7 +2043,9 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
+      contextThreshold: 400_000,
+      serverUrl: 'http://127.0.0.1:9999',
+      resolveModel: async () => ({ providerID: 'test', modelID: 'test' }),
     });
 
     // Full cycle: message.updated → idle (write) → idle (compact fallback) → compacted → idle (refresh) → idle (complete)
@@ -2035,7 +2079,9 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
+      contextThreshold: 400_000,
+      serverUrl: 'http://127.0.0.1:9999',
+      resolveModel: async () => ({ providerID: 'test', modelID: 'test' }),
       periodicDoneCheck: false,
     });
 
@@ -2070,7 +2116,9 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
+      contextThreshold: 400_000,
+      serverUrl: 'http://127.0.0.1:9999',
+      resolveModel: async () => ({ providerID: 'test', modelID: 'test' }),
     });
 
     await hook.event(messageUpdatedEvent('ses_other', 450_000));
@@ -2087,7 +2135,9 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
+      contextThreshold: 400_000,
+      serverUrl: 'http://127.0.0.1:9999',
+      resolveModel: async () => ({ providerID: 'test', modelID: 'test' }),
     });
 
     // User message with high tokens — should be ignored
@@ -2118,7 +2168,9 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
+      contextThreshold: 400_000,
+      serverUrl: 'http://127.0.0.1:9999',
+      resolveModel: async () => ({ providerID: 'test', modelID: 'test' }),
     });
 
     const output: { context: string[]; prompt?: string } = { context: [] };
@@ -2137,7 +2189,9 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
+      contextThreshold: 400_000,
+      serverUrl: 'http://127.0.0.1:9999',
+      resolveModel: async () => ({ providerID: 'test', modelID: 'test' }),
     });
 
     const output: { context: string[]; prompt?: string } = { context: [] };
@@ -2155,7 +2209,9 @@ describe('deepwork-wakeup hook', () => {
       backgroundJobBoard: board,
       shouldManageSession: (id) => id === 'ses_orch',
       ...FAST_OPTS,
-      contextThreshold: 400_000, serverUrl: "http://127.0.0.1:9999", resolveModel: async () => ({ providerID: "test", modelID: "test" }),
+      contextThreshold: 400_000,
+      serverUrl: 'http://127.0.0.1:9999',
+      resolveModel: async () => ({ providerID: 'test', modelID: 'test' }),
     });
 
     // Start compact cycle
