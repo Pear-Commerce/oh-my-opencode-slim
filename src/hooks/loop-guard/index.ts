@@ -1,21 +1,24 @@
 /**
- * Loop Guard — detects repeated identical tool calls and breaks the cycle.
+ * Loop Guard — detects repeated tool-call patterns and breaks the cycle.
  *
  * Models (DeepSeek, GLM, Kimi, Gemini Flash, etc.) can get stuck in
- * "doom loops" where they issue the exact same tool call dozens of times
- * with byte-identical reasoning, never progressing. OpenCode's built-in
- * doom_loop permission asks the user — but with `permission: "allow"`
- * (common for autonomous/headless use), it auto-approves and the loop
- * continues indefinitely.
+ * "doom loops" where they repeat the same tool calls dozens of times
+ * without progressing. OpenCode's built-in doom_loop permission asks the
+ * user — but with `permission: "allow"` (common for autonomous/headless
+ * use), it auto-approves and the loop continues indefinitely.
  *
  * This hook operates at the tool-output level, independent of permissions:
- * - After 3 identical consecutive calls: append a strong nudge
- * - After 5 identical consecutive calls: REPLACE the tool output with an
- *   interrupt, withholding the repeated content so the model's input
- *   changes and the byte-identical input→output cycle breaks
+ * - After a fingerprint appears 3 times in the recent window: append a nudge
+ * - After a fingerprint appears 5 times in the recent window: REPLACE the
+ *   tool output with an interrupt, withholding the repeated content so the
+ *   model's input changes and the byte-identical input→output cycle breaks
  *
- * "Consecutive" means no different tool call in between. A read→edit→read
- * sequence resets the counter because the edit is a different fingerprint.
+ * Uses a sliding window of recent fingerprints per session. This catches
+ * both consecutive duplicates (A→A→A) and multi-call cycles (A→B→A→B→A→B)
+ * that a simple "consecutive identical" detector would miss.
+ *
+ * Read-after-edit is safe: a read with different args (different offset,
+ * different file) produces a different fingerprint and dilutes the window.
  */
 
 // --- Thresholds ---
@@ -26,18 +29,27 @@ const WARN_THRESHOLD = 3;
 /** Replace the tool output entirely, withholding the repeated content. */
 const HARD_THRESHOLD = 5;
 
+/**
+ * Sliding window size. Must be large enough to catch multi-call cycles.
+ * With HARD_THRESHOLD=5 and a 2-cycle (A→B→A→B→...), A reaches threshold
+ * at 5 occurrences = 10 calls. Window of 20 comfortably covers 2-cycles
+ * and 3-cycles while staying small enough for O(n) per-call cost.
+ */
+const WINDOW_SIZE = 20;
+
 const LOOP_NUDGE_MARKER = '[LOOP DETECTED — STOP REPEATING THIS CALL]';
 const LOOP_INTERRUPT_MARKER = '[LOOP INTERRUPT — repeated identical call suppressed]';
 
 // --- State ---
 
-interface LoopState {
-  /** Fingerprint of the last tool call for this session. */
+interface WindowEntry {
   fingerprint: string;
-  /** Consecutive count of identical calls. */
-  count: number;
-  /** Human-readable description of the repeated call for nudge text. */
   description: string;
+}
+
+interface LoopState {
+  /** Sliding window of recent fingerprints (most recent at end). */
+  window: WindowEntry[];
 }
 
 interface PendingHit {
@@ -110,19 +122,19 @@ function describeCall(tool: string, args: unknown): string {
 
 function nudgeText(count: number, description: string): string {
   return `\n\n${LOOP_NUDGE_MARKER}
-You have issued this exact ${description} ${count} times in a row.
+You have issued this exact ${description} ${count} times recently.
 The result is identical every time and is already in your context. Repeating it changes nothing.
 Do NOT issue this call again. Choose ONE:
-  1. Act on what you already have (edit / write / run a command).
-  2. Read a DIFFERENT location (different offset) or a different file.
+  1. Act on what you already have (edit / write / run a different command).
+  2. Inspect a DIFFERENT file, location, or pattern.
   3. If you are blocked, state the blocker plainly and return your final answer.`;
 }
 
 function interruptText(count: number, description: string): string {
   return `${LOOP_INTERRUPT_MARKER}
-This is the ${count}th identical ${description}. The content is UNCHANGED from the
+This is the ${count}th occurrence of ${description}. The content is UNCHANGED from the
 copies already in your context, so it has been withheld to break the loop you are stuck in.
-You are repeating the same reasoning and producing the same output. Change strategy NOW:
+You are repeating the same actions without making progress. Change strategy NOW:
   - Take a concrete action based on what you have already seen, OR
   - Explain what is blocking you and return your final answer.
 Do not repeat this call — you will keep getting this message, not the result.`;
@@ -163,16 +175,22 @@ export function createLoopGuardHook() {
 
       const fp = fingerprint(input.tool, output.args);
       const desc = describeCall(input.tool, output.args);
-      const state = bySession.get(sessionID);
-
-      let count: number;
-      if (state && state.fingerprint === fp) {
-        count = state.count + 1;
-      } else {
-        count = 1;
+      let state = bySession.get(sessionID);
+      if (!state) {
+        state = { window: [] };
+        bySession.set(sessionID, state);
       }
 
-      bySession.set(sessionID, { fingerprint: fp, count, description: desc });
+      // Push into sliding window, cap at WINDOW_SIZE
+      state.window.push({ fingerprint: fp, description: desc });
+      if (state.window.length > WINDOW_SIZE) {
+        state.window.shift();
+      }
+
+      // Count occurrences of this fingerprint in the window
+      const count = state.window.filter(
+        (entry) => entry.fingerprint === fp,
+      ).length;
 
       if (count >= WARN_THRESHOLD) {
         pending.set(callID, { fingerprint: fp, count, description: desc });
@@ -219,6 +237,7 @@ export function clearLoopState(sessionID: string): void {
 export const _internals = {
   WARN_THRESHOLD,
   HARD_THRESHOLD,
+  WINDOW_SIZE,
   LOOP_NUDGE_MARKER,
   LOOP_INTERRUPT_MARKER,
   fingerprint,
