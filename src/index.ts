@@ -19,6 +19,7 @@ import {
 } from './config/runtime-preset';
 import { CouncilManager } from './council';
 import {
+  clearLoopState,
   createApplyPatchHook,
   createAutoUpdateCheckerHook,
   createChatHeadersHook,
@@ -29,7 +30,6 @@ import {
   createFilterAvailableSkillsHook,
   createFixerReviewHook,
   createJsonErrorRecoveryHook,
-  clearLoopState,
   createLoopGuardHook,
   createPhaseReminderHook,
   createPostFileToolNudgeHook,
@@ -360,6 +360,10 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       // by user" from "finished a turn" and the 5s poll re-executes the thread
       // the user just stopped. Event-driven wakes (background completion →
       // reconcile) and one-shot gate firing still work.
+      // The periodic timer still runs as a stale-idle safety net: it fires
+      // the done-check if the orchestrator has been idle >60s without a
+      // one-shot firing (e.g. blocked by a stale condition after a cancelled
+      // task, or the idle event was not processed by the hook).
       periodicDoneCheck: false,
       resolveModel: async (sessionID) => {
         // Resolve the session's agent so promptAsync routes to the correct
@@ -983,18 +987,25 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         },
       );
 
-      await deepworkWakeupHook.event(
-        input as {
-          event: {
-            type: string;
-            properties?: {
-              info?: { id?: string };
-              sessionID?: string;
-              status?: { type?: string };
+      try {
+        await deepworkWakeupHook.event(
+          input as {
+            event: {
+              type: string;
+              properties?: {
+                info?: { id?: string };
+                sessionID?: string;
+                status?: { type?: string };
+              };
             };
-          };
-        },
-      );
+          },
+        );
+      } catch (err) {
+        log('[plugin] deepworkWakeupHook.event threw', {
+          error: err instanceof Error ? err.message : String(err),
+          eventType: event.type,
+        });
+      }
 
       if (
         event.type === 'permission.asked' ||

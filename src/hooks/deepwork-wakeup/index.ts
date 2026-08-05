@@ -372,6 +372,14 @@ interface SessionWakeState {
    * advancing the cycle before work actually occurs.
    */
   compactCycleSawBusy: boolean;
+  /**
+   * Timestamp of the last time the orchestrator transitioned to idle.
+   * Used by the stale-idle safety net to detect when the one-shot
+   * done-check has been blocked for too long by a stuck condition
+   * (e.g. stale hasRunning, hasTerminalUnreconciled, or
+   * hasPendingTaskCall after a cancelled task).
+   */
+  lastIdleAt: number;
 }
 
 export interface DeepworkWakeupOptions {
@@ -446,9 +454,7 @@ export interface DeepworkWakeupOptions {
    * the agent name and checks if it's an orchestrator-class agent.
    * Returns true if the session should be managed.
    */
-  shouldManageSessionAsync?: (
-    sessionID: string,
-  ) => Promise<boolean>;
+  shouldManageSessionAsync?: (sessionID: string) => Promise<boolean>;
   /**
    * Input-token threshold that triggers the auto-compact cycle. When the
    * orchestrator's input tokens exceed this value, the hook prompts it to
@@ -497,7 +503,10 @@ export function createDeepworkWakeupHook(
   const hasHadBackgroundWork = new Set<string>();
   const timers = new Map<string, ReturnType<typeof setInterval>>();
   const consultationTimers = new Map<string, ReturnType<typeof setInterval>>();
-  const compactFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const compactFallbackTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
   const sessionsSeen = new Set<string>();
 
   function getState(sessionID: string): SessionWakeState {
@@ -521,6 +530,7 @@ export function createDeepworkWakeupHook(
         lastInputTokens: 0,
         deepworkFileWritten: false,
         compactCycleSawBusy: false,
+        lastIdleAt: 0,
       };
       states.set(sessionID, s);
     }
@@ -567,8 +577,20 @@ export function createDeepworkWakeupHook(
   }
 
   function startTimer(sessionID: string): void {
-    if (!periodicDoneCheck) return; // disabled via option — see DeepworkWakeupOptions
-    if (timers.has(sessionID)) return; // already running
+    // Don't start a duplicate timer.
+    if (timers.has(sessionID)) return;
+
+    // When periodicDoneCheck is true, the timer fires the done-check/gate
+    // on every tick. When false (production default), the timer acts as a
+    // stale-idle safety net: it only fires the done-check if the
+    // orchestrator has been idle for >STALE_IDLE_THRESHOLD_MS without a
+    // done-check firing. This prevents deepwork loops from dying when the
+    // one-shot done-check from the idle handler is blocked by a stale
+    // condition (e.g. stuck hasRunning, hasTerminalUnreconciled, or
+    // hasPendingTaskCall after a cancelled task) or when the idle event
+    // itself was not processed by the hook (e.g. a transient error in
+    // the event handler).
+    const STALE_IDLE_THRESHOLD_MS = 60_000;
 
     const timer = setInterval(() => {
       const state = states.get(sessionID);
@@ -590,23 +612,46 @@ export function createDeepworkWakeupHook(
         return;
       }
 
-      // Don't fire the done-check/gate while background jobs are still
-      // running OR while there's unreconciled terminal work. The
-      // orchestrator is correctly idle waiting for them — the event-driven
-      // wake (Case 2) handles completion. Firing the gate here would start
-      // a new review while a fixer result is still pending reconciliation.
-      if (
-        backgroundJobBoard.hasRunning(sessionID) ||
-        backgroundJobBoard.hasTerminalUnreconciled(sessionID)
-      ) {
-        return;
-      }
+      if (periodicDoneCheck) {
+        // Original behavior: fire on every tick (if not blocked by
+        // running/unreconciled jobs).
+        if (
+          backgroundJobBoard.hasRunning(sessionID) ||
+          backgroundJobBoard.hasTerminalUnreconciled(sessionID)
+        ) {
+          return;
+        }
 
-      log('[deepwork-wakeup] periodic timer firing gate/done-check', {
-        sessionID,
-        hasGate: Boolean(state.gate),
-      });
-      sendDoneCheck(sessionID).catch(() => {});
+        log('[deepwork-wakeup] periodic timer firing gate/done-check', {
+          sessionID,
+          hasGate: Boolean(state.gate),
+        });
+        sendDoneCheck(sessionID).catch(() => {});
+      } else {
+        // Safety net mode: only fire if the orchestrator has been idle
+        // for >STALE_IDLE_THRESHOLD_MS without a done-check. This catches
+        // stalls where the one-shot done-check from the idle handler was
+        // blocked by a stale condition or never processed.
+        const idleAgeMs = Date.now() - state.lastIdleAt;
+        if (idleAgeMs < STALE_IDLE_THRESHOLD_MS) return;
+
+        const hasRunning = backgroundJobBoard.hasRunning(sessionID);
+        const hasUnreconciled =
+          backgroundJobBoard.hasTerminalUnreconciled(sessionID);
+        const hasPendingTask = hasPendingTaskCall?.(sessionID) ?? false;
+
+        log(
+          '[deepwork-wakeup] stale-idle safety net firing done-check from periodic timer',
+          {
+            sessionID,
+            idleAgeMs,
+            hasRunning,
+            hasUnreconciled,
+            hasPendingTask,
+          },
+        );
+        sendDoneCheck(sessionID).catch(() => {});
+      }
     }, intervalMs);
 
     // Do NOT unref this timer. The plugin runs in a Node.js utility process
@@ -780,9 +825,12 @@ export function createDeepworkWakeupHook(
       // Use the session's provider/model for compaction. The summarize
       // endpoint needs providerID and modelID.
       if (!model) {
-        log('[deepwork-wakeup] no model resolved for compaction, falling back to continue prompt', {
-          sessionID,
-        });
+        log(
+          '[deepwork-wakeup] no model resolved for compaction, falling back to continue prompt',
+          {
+            sessionID,
+          },
+        );
         state.compactCycle = 'normal';
         state.lastCompactAt = Date.now();
         state.deepworkFileWritten = false;
@@ -812,9 +860,12 @@ export function createDeepworkWakeupHook(
       };
 
       if (typeof sessionClient.summarize !== 'function') {
-        log('[deepwork-wakeup] session.summarize unavailable, falling back to continue prompt', {
-          sessionID,
-        });
+        log(
+          '[deepwork-wakeup] session.summarize unavailable, falling back to continue prompt',
+          {
+            sessionID,
+          },
+        );
         state.compactCycle = 'normal';
         state.lastCompactAt = Date.now();
         state.deepworkFileWritten = false;
@@ -871,10 +922,13 @@ export function createDeepworkWakeupHook(
       // session.compacted event will fire when compaction completes.
       // The event handler sends the refresh prompt.
     } catch (err) {
-      log('[deepwork-wakeup] failed to trigger compaction via session.summarize', {
-        sessionID,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      log(
+        '[deepwork-wakeup] failed to trigger compaction via session.summarize',
+        {
+          sessionID,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
       const state = getState(sessionID);
       state.compactCycle = 'normal';
       state.lastCompactAt = Date.now();
@@ -1568,9 +1622,7 @@ export function createDeepworkWakeupHook(
    * cycle. This is the primary trigger — message.updated events are not
    * reliably emitted to plugins with token data.
    */
-  async function checkContextThresholdOnIdle(
-    sessionID: string,
-  ): Promise<void> {
+  async function checkContextThresholdOnIdle(sessionID: string): Promise<void> {
     const state = getState(sessionID);
     if (state.compactCycle !== 'normal') return;
     if (Date.now() - state.lastCompactAt < compactCooldownMs) return;
@@ -1601,7 +1653,10 @@ export function createDeepworkWakeupHook(
       log('[deepwork-wakeup] messages retrieved for token check', {
         sessionID,
         messageCount: messages.length,
-        lastRole: messages.length > 0 ? messages[messages.length - 1]?.info?.role : 'none',
+        lastRole:
+          messages.length > 0
+            ? messages[messages.length - 1]?.info?.role
+            : 'none',
       });
 
       // The context window size is best approximated by the MAXIMUM
@@ -1830,12 +1885,9 @@ export function createDeepworkWakeupHook(
             compactFallbackTimers.delete(compactedSessionId);
           }
           state.deepworkFileWritten = false;
-          log(
-            '[deepwork-wakeup] compaction complete, sending refresh prompt',
-            {
-              sessionId: compactedSessionId,
-            },
-          );
+          log('[deepwork-wakeup] compaction complete, sending refresh prompt', {
+            sessionId: compactedSessionId,
+          });
           state.compactCycle = 'awaitingRefresh';
           // Send directly via promptAsync — the orchestrator may not be
           // idle yet (session.compacted fires during the agent loop).
@@ -1931,6 +1983,7 @@ export function createDeepworkWakeupHook(
       if (shouldManageSession(sessionId)) {
         const state = getState(sessionId);
         state.idle = true;
+        state.lastIdleAt = Date.now();
 
         // ── Context-compact: check token threshold on idle ────────────
         // message.updated events don't reliably carry token data to plugins,
@@ -2120,6 +2173,11 @@ export function createDeepworkWakeupHook(
 
         // Start periodic timer if this session has had background work
         // OR has a gate set (convergence loop — the gate is the signal).
+        // Even when periodicDoneCheck is false (production default), the
+        // timer runs as a stale-idle safety net — it fires the done-check
+        // if the orchestrator has been idle >60s without a one-shot
+        // done-check firing (e.g. blocked by a stale condition or the
+        // idle event was not processed by the hook).
         if (hasHadBackgroundWork.has(sessionId) || state.gate) {
           startTimer(sessionId);
         }
@@ -2132,6 +2190,10 @@ export function createDeepworkWakeupHook(
         // background work reconciled. If the orchestrator says "yes, done"
         // the loop stops; if "no" it gets a continue prompt and goes busy,
         // then fires again on the next idle.
+        const hasRunning = backgroundJobBoard.hasRunning(sessionId);
+        const hasUnreconciled =
+          backgroundJobBoard.hasTerminalUnreconciled(sessionId);
+        const hasPendingTask = hasPendingTaskCall?.(sessionId) ?? false;
         if (
           !periodicDoneCheck &&
           !state.gate &&
@@ -2139,14 +2201,9 @@ export function createDeepworkWakeupHook(
           !state.wakeInFlight &&
           !sentEventWake &&
           hasHadBackgroundWork.has(sessionId) &&
-          !backgroundJobBoard.hasRunning(sessionId) &&
-          !backgroundJobBoard.hasTerminalUnreconciled(sessionId) &&
-          // Suppress the done-check while a foreground task call (e.g. a
-          // consultation-triggered oracle subagent) is in flight. The
-          // background job board only tracks background tasks, so without
-          // this the done-check fires "are you done?" while the oracle is
-          // still reviewing.
-          !(hasPendingTaskCall?.(sessionId) ?? false)
+          !hasRunning &&
+          !hasUnreconciled &&
+          !hasPendingTask
         ) {
           log(
             '[deepwork-wakeup] firing one-shot done-check from idle handler (periodicDoneCheck disabled)',
@@ -2155,6 +2212,45 @@ export function createDeepworkWakeupHook(
             },
           );
           sendDoneCheck(sessionId).catch(() => {});
+        } else if (
+          !periodicDoneCheck &&
+          !state.gate &&
+          !state.awaitingDoneCheck &&
+          !state.wakeInFlight &&
+          !sentEventWake &&
+          hasHadBackgroundWork.has(sessionId)
+        ) {
+          // The done-check was blocked by one of the guard conditions.
+          // Log which one so we can diagnose stalls.
+          const idleAgeMs = Date.now() - state.lastIdleAt;
+          log('[deepwork-wakeup] one-shot done-check blocked by guard', {
+            sessionID: sessionId,
+            hasRunning,
+            hasUnreconciled,
+            hasPendingTask,
+            idleAgeMs,
+          });
+
+          // ── Stale-idle safety net ──────────────────────────────────
+          // If the orchestrator has been idle for >60s and the done-check
+          // is still blocked, the blocking condition is likely stale
+          // (e.g. a cancelled task left a stuck pendingCall, or a
+          // background job was dropped without being marked reconciled).
+          // Fire the done-check anyway to prevent the loop from dying.
+          const STALE_IDLE_THRESHOLD_MS = 60_000;
+          if (idleAgeMs > STALE_IDLE_THRESHOLD_MS) {
+            log(
+              '[deepwork-wakeup] stale-idle safety net firing done-check after 60s block',
+              {
+                sessionID: sessionId,
+                idleAgeMs,
+                hasRunning,
+                hasUnreconciled,
+                hasPendingTask,
+              },
+            );
+            sendDoneCheck(sessionId).catch(() => {});
+          }
         }
 
         // If a gate is set and no background jobs are running, fire the gate
