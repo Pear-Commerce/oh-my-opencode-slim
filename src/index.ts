@@ -1136,6 +1136,20 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         output as { parts: Array<{ type: string; text?: string }> },
       );
 
+      // Activate continuation for /deepwork sessions so the wakeup hook
+      // knows this is an autonomous loop, not an ordinary chat. Without
+      // this, sessions doing inline work (no background tasks) never
+      // receive done-checks and the loop dies permanently.
+      if (
+        input.command === 'deepwork' &&
+        typeof input.sessionID === 'string' &&
+        input.sessionID.trim() !== '' &&
+        typeof input.arguments === 'string' &&
+        input.arguments.trim() !== ''
+      ) {
+        deepworkWakeupHook.activateSession(input.sessionID);
+      }
+
       await reflectCommandHook.handleCommandExecuteBefore(
         input as {
           command: string;

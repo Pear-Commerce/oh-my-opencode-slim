@@ -408,7 +408,7 @@ describe('deepwork-wakeup hook', () => {
     hook._destroy();
   });
 
-  test('periodic timer starts for orchestrator even without background history', async () => {
+  test('periodic timer starts for orchestrator with active continuation', async () => {
     const board = new BackgroundJobBoard();
     const { client } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
@@ -419,10 +419,31 @@ describe('deepwork-wakeup hook', () => {
       intervalMs: 50,
     });
 
+    // Activate continuation (simulates /deepwork command)
+    hook.activateSession('ses_orch');
+
     await hook.event(idleEvent('ses_orch'));
     const timers = (hook as unknown as { _timers: Map<string, unknown> })
       ._timers;
     expect(timers.has('ses_orch')).toBe(true);
+  });
+
+  test('periodic timer does NOT start for inactive orchestrator (ordinary chat)', async () => {
+    const board = new BackgroundJobBoard();
+    const { client } = makeClient();
+    const hook = createDeepworkWakeupHook(client, {
+      backgroundJobBoard: board,
+      shouldManageSession: (id) => id === 'ses_orch',
+      wakeDelayMs: 0,
+      dedupWindowMs: 0,
+      intervalMs: 50,
+    });
+
+    // No activation — ordinary orchestrator chat
+    await hook.event(idleEvent('ses_orch'));
+    const timers = (hook as unknown as { _timers: Map<string, unknown> })
+      ._timers;
+    expect(timers.has('ses_orch')).toBe(false);
   });
 
   test('periodic timer sends done-check question, then continue prompt on "no"', async () => {
@@ -1533,15 +1554,13 @@ describe('deepwork-wakeup hook', () => {
       directory: dir,
     });
 
-    // No hasHadBackgroundWork — session has no background history.
-    // Timer now starts for all managed sessions (not just ones with
-    // background work), so it starts on the first idle event.
+    // No activation, no background work — timer does NOT start on idle
     await hook.event(idleEvent('ses_orch'));
     const timers = (hook as unknown as { _timers: Map<string, unknown> })
       ._timers;
-    expect(timers.has('ses_orch')).toBe(true);
+    expect(timers.has('ses_orch')).toBe(false);
 
-    // Now set a gate — timer already running, stays running
+    // Now set a gate — timer should start immediately (session is idle)
     hook.setGate('ses_orch', { type: 'command', command: 'true' });
     expect(timers.has('ses_orch')).toBe(true);
 

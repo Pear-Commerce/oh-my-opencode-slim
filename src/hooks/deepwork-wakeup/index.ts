@@ -380,6 +380,14 @@ interface SessionWakeState {
    * hasPendingTaskCall after a cancelled task).
    */
   lastIdleAt: number;
+  /**
+   * Explicitly activated by /deepwork command or other continuation
+   * triggers. When true (or when hasHadBackgroundWork / state.gate is
+   * set), the session receives done-checks, periodic timers, and the
+   * stale-idle safety net. Ordinary orchestrator chats that never opted
+   * into autonomous continuation are left alone.
+   */
+  continuationActive: boolean;
 }
 
 export interface DeepworkWakeupOptions {
@@ -531,10 +539,26 @@ export function createDeepworkWakeupHook(
         deepworkFileWritten: false,
         compactCycleSawBusy: false,
         lastIdleAt: 0,
+        continuationActive: false,
       };
       states.set(sessionID, s);
     }
     return s;
+  }
+
+  /**
+   * Whether a session has an active continuation loop — either
+   * explicitly activated via /deepwork, has launched background work,
+   * or has a convergence gate set. Used as the gate for done-checks,
+   * periodic timers, and the stale-idle safety net.
+   */
+  function isContinuationActive(sessionID: string): boolean {
+    const state = states.get(sessionID);
+    return (
+      hasHadBackgroundWork.has(sessionID) ||
+      Boolean(state?.continuationActive) ||
+      Boolean(state?.gate)
+    );
   }
 
   function boardSignature(sessionID: string): string {
@@ -991,6 +1015,8 @@ export function createDeepworkWakeupHook(
           sessionID,
         });
         clearTimer(sessionID);
+        state.gate = undefined;
+        state.continuationActive = false;
         // Clear the persisted gate — the loop is done.
         persistGate(directory, sessionID, undefined);
         return;
@@ -1520,6 +1546,8 @@ export function createDeepworkWakeupHook(
       clearTimer(sessionID);
       state.awaitingDoneCheck = false;
       state.gateCheckPromptSent = false;
+      state.gate = undefined;
+      state.continuationActive = false;
       // Clear the persisted gate — the loop is done.
       persistGate(directory, sessionID, undefined);
       return;
@@ -1784,6 +1812,7 @@ export function createDeepworkWakeupHook(
       );
       clearTimer(sessionID);
       state.awaitingDoneCheck = false;
+      state.continuationActive = false;
       return;
     }
 
@@ -1996,7 +2025,7 @@ export function createDeepworkWakeupHook(
         // seconds if run on every idle.
         if (
           state.compactCycle === 'normal' &&
-          (hasHadBackgroundWork.has(sessionId) || state.gate) &&
+          isContinuationActive(sessionId) &&
           !backgroundJobBoard.hasRunning(sessionId) &&
           !backgroundJobBoard.hasTerminalUnreconciled(sessionId) &&
           !state.awaitingDoneCheck &&
@@ -2171,16 +2200,16 @@ export function createDeepworkWakeupHook(
           );
         }
 
-        // Start periodic timer for all managed orchestrator sessions.
+        // Start periodic timer for sessions with active continuation loops.
         // Even when periodicDoneCheck is false (production default), the
         // timer runs as a stale-idle safety net — it fires the done-check
         // if the orchestrator has been idle >60s without a one-shot
         // done-check firing (e.g. blocked by a stale condition or the
         // idle event was not processed by the hook).
-        // Previously this was gated on hasHadBackgroundWork, but that
-        // caused sessions doing inline work (no background tasks) to
-        // never get a continuation prompt — the loop died permanently.
-        startTimer(sessionId);
+        // Activation sources: /deepwork command, background work, or gate.
+        if (isContinuationActive(sessionId)) {
+          startTimer(sessionId);
+        }
 
         // If the periodic done-check is disabled (the default to avoid
         // re-executing manually-stopped threads), fire a ONE-SHOT done-check
@@ -2200,6 +2229,7 @@ export function createDeepworkWakeupHook(
           !state.awaitingDoneCheck &&
           !state.wakeInFlight &&
           !sentEventWake &&
+          isContinuationActive(sessionId) &&
           !hasRunning &&
           !hasUnreconciled &&
           !hasPendingTask
@@ -2216,7 +2246,8 @@ export function createDeepworkWakeupHook(
           !state.gate &&
           !state.awaitingDoneCheck &&
           !state.wakeInFlight &&
-          !sentEventWake
+          !sentEventWake &&
+          isContinuationActive(sessionId)
         ) {
           // The done-check was blocked by one of the guard conditions.
           // Log which one so we can diagnose stalls.
@@ -2432,6 +2463,22 @@ export function createDeepworkWakeupHook(
           sessionID: input.sessionID,
         },
       );
+    },
+
+    /**
+     * Explicitly activate continuation for a session. Called by the
+     * /deepwork command handler before the first model turn so the
+     * wakeup hook knows this session is an autonomous loop, not an
+     * ordinary chat. Without this, sessions doing inline work (no
+     * background tasks) would never receive done-checks and the loop
+     * would die permanently.
+     */
+    activateSession(sessionID: string): void {
+      const state = getState(sessionID);
+      state.continuationActive = true;
+      log('[deepwork-wakeup] session continuation activated', {
+        sessionID,
+      });
     },
 
     /** @internal Exposed for testing */
