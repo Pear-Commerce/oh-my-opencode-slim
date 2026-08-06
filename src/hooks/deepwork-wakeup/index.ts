@@ -2171,16 +2171,16 @@ export function createDeepworkWakeupHook(
           );
         }
 
-        // Start periodic timer if this session has had background work
-        // OR has a gate set (convergence loop — the gate is the signal).
+        // Start periodic timer for all managed orchestrator sessions.
         // Even when periodicDoneCheck is false (production default), the
         // timer runs as a stale-idle safety net — it fires the done-check
         // if the orchestrator has been idle >60s without a one-shot
         // done-check firing (e.g. blocked by a stale condition or the
         // idle event was not processed by the hook).
-        if (hasHadBackgroundWork.has(sessionId) || state.gate) {
-          startTimer(sessionId);
-        }
+        // Previously this was gated on hasHadBackgroundWork, but that
+        // caused sessions doing inline work (no background tasks) to
+        // never get a continuation prompt — the loop died permanently.
+        startTimer(sessionId);
 
         // If the periodic done-check is disabled (the default to avoid
         // re-executing manually-stopped threads), fire a ONE-SHOT done-check
@@ -2200,7 +2200,6 @@ export function createDeepworkWakeupHook(
           !state.awaitingDoneCheck &&
           !state.wakeInFlight &&
           !sentEventWake &&
-          hasHadBackgroundWork.has(sessionId) &&
           !hasRunning &&
           !hasUnreconciled &&
           !hasPendingTask
@@ -2217,8 +2216,7 @@ export function createDeepworkWakeupHook(
           !state.gate &&
           !state.awaitingDoneCheck &&
           !state.wakeInFlight &&
-          !sentEventWake &&
-          hasHadBackgroundWork.has(sessionId)
+          !sentEventWake
         ) {
           // The done-check was blocked by one of the guard conditions.
           // Log which one so we can diagnose stalls.

@@ -408,7 +408,7 @@ describe('deepwork-wakeup hook', () => {
     hook._destroy();
   });
 
-  test('periodic timer does NOT start for orchestrator without background history', async () => {
+  test('periodic timer starts for orchestrator even without background history', async () => {
     const board = new BackgroundJobBoard();
     const { client } = makeClient();
     const hook = createDeepworkWakeupHook(client, {
@@ -422,7 +422,7 @@ describe('deepwork-wakeup hook', () => {
     await hook.event(idleEvent('ses_orch'));
     const timers = (hook as unknown as { _timers: Map<string, unknown> })
       ._timers;
-    expect(timers.has('ses_orch')).toBe(false);
+    expect(timers.has('ses_orch')).toBe(true);
   });
 
   test('periodic timer sends done-check question, then continue prompt on "no"', async () => {
@@ -1533,15 +1533,15 @@ describe('deepwork-wakeup hook', () => {
       directory: dir,
     });
 
-    // No hasHadBackgroundWork — session has no background history
-
-    // Orchestrator goes idle first (no timer starts — no background work, no gate)
+    // No hasHadBackgroundWork — session has no background history.
+    // Timer now starts for all managed sessions (not just ones with
+    // background work), so it starts on the first idle event.
     await hook.event(idleEvent('ses_orch'));
     const timers = (hook as unknown as { _timers: Map<string, unknown> })
       ._timers;
-    expect(timers.has('ses_orch')).toBe(false);
+    expect(timers.has('ses_orch')).toBe(true);
 
-    // Now set a gate — timer should start immediately (session is idle)
+    // Now set a gate — timer already running, stays running
     hook.setGate('ses_orch', { type: 'command', command: 'true' });
     expect(timers.has('ses_orch')).toBe(true);
 

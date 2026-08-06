@@ -24545,7 +24545,8 @@ function createDeepworkWakeupHook(client, options) {
         lastCompactAt: 0,
         lastInputTokens: 0,
         deepworkFileWritten: false,
-        compactCycleSawBusy: false
+        compactCycleSawBusy: false,
+        lastIdleAt: 0
       };
       states.set(sessionID, s);
     }
@@ -24573,10 +24574,9 @@ function createDeepworkWakeupHook(client, options) {
     }
   }
   function startTimer(sessionID) {
-    if (!periodicDoneCheck)
-      return;
     if (timers.has(sessionID))
       return;
+    const STALE_IDLE_THRESHOLD_MS = 60000;
     const timer = setInterval(() => {
       const state = states.get(sessionID);
       if (!state) {
@@ -24597,14 +24597,31 @@ function createDeepworkWakeupHook(client, options) {
         clearTimer(sessionID);
         return;
       }
-      if (backgroundJobBoard.hasRunning(sessionID) || backgroundJobBoard.hasTerminalUnreconciled(sessionID)) {
-        return;
+      if (periodicDoneCheck) {
+        if (backgroundJobBoard.hasRunning(sessionID) || backgroundJobBoard.hasTerminalUnreconciled(sessionID)) {
+          return;
+        }
+        log("[deepwork-wakeup] periodic timer firing gate/done-check", {
+          sessionID,
+          hasGate: Boolean(state.gate)
+        });
+        sendDoneCheck(sessionID).catch(() => {});
+      } else {
+        const idleAgeMs = Date.now() - state.lastIdleAt;
+        if (idleAgeMs < STALE_IDLE_THRESHOLD_MS)
+          return;
+        const hasRunning = backgroundJobBoard.hasRunning(sessionID);
+        const hasUnreconciled = backgroundJobBoard.hasTerminalUnreconciled(sessionID);
+        const hasPendingTask = hasPendingTaskCall?.(sessionID) ?? false;
+        log("[deepwork-wakeup] stale-idle safety net firing done-check from periodic timer", {
+          sessionID,
+          idleAgeMs,
+          hasRunning,
+          hasUnreconciled,
+          hasPendingTask
+        });
+        sendDoneCheck(sessionID).catch(() => {});
       }
-      log("[deepwork-wakeup] periodic timer firing gate/done-check", {
-        sessionID,
-        hasGate: Boolean(state.gate)
-      });
-      sendDoneCheck(sessionID).catch(() => {});
     }, intervalMs);
     timers.set(sessionID, timer);
     log("[deepwork-wakeup] periodic timer started", {
@@ -25391,6 +25408,7 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
       if (shouldManageSession(sessionId)) {
         const state = getState(sessionId);
         state.idle = true;
+        state.lastIdleAt = Date.now();
         if (state.compactCycle === "normal" && (hasHadBackgroundWork.has(sessionId) || state.gate) && !backgroundJobBoard.hasRunning(sessionId) && !backgroundJobBoard.hasTerminalUnreconciled(sessionId) && !state.awaitingDoneCheck && !state.wakeInFlight) {
           await checkContextThresholdOnIdle(sessionId);
         }
@@ -25477,15 +25495,38 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
         if (hasHadBackgroundWork.has(sessionId) || state.gate) {
           startTimer(sessionId);
         }
-        if (!periodicDoneCheck && !state.gate && !state.awaitingDoneCheck && !state.wakeInFlight && !sentEventWake && hasHadBackgroundWork.has(sessionId) && !backgroundJobBoard.hasRunning(sessionId) && !backgroundJobBoard.hasTerminalUnreconciled(sessionId) && !(hasPendingTaskCall?.(sessionId) ?? false)) {
+        const hasRunning = backgroundJobBoard.hasRunning(sessionId);
+        const hasUnreconciled = backgroundJobBoard.hasTerminalUnreconciled(sessionId);
+        const hasPendingTask = hasPendingTaskCall?.(sessionId) ?? false;
+        if (!periodicDoneCheck && !state.gate && !state.awaitingDoneCheck && !state.wakeInFlight && !sentEventWake && hasHadBackgroundWork.has(sessionId) && !hasRunning && !hasUnreconciled && !hasPendingTask) {
           log("[deepwork-wakeup] firing one-shot done-check from idle handler (periodicDoneCheck disabled)", {
             sessionID: sessionId
           });
           sendDoneCheck(sessionId).catch(() => {});
+        } else if (!periodicDoneCheck && !state.gate && !state.awaitingDoneCheck && !state.wakeInFlight && !sentEventWake && hasHadBackgroundWork.has(sessionId)) {
+          const idleAgeMs = Date.now() - state.lastIdleAt;
+          log("[deepwork-wakeup] one-shot done-check blocked by guard", {
+            sessionID: sessionId,
+            hasRunning,
+            hasUnreconciled,
+            hasPendingTask,
+            idleAgeMs
+          });
+          const STALE_IDLE_THRESHOLD_MS = 60000;
+          if (idleAgeMs > STALE_IDLE_THRESHOLD_MS) {
+            log("[deepwork-wakeup] stale-idle safety net firing done-check after 60s block", {
+              sessionID: sessionId,
+              idleAgeMs,
+              hasRunning,
+              hasUnreconciled,
+              hasPendingTask
+            });
+            sendDoneCheck(sessionId).catch(() => {});
+          }
         }
         if (state.gate) {
-          const hasRunning = backgroundJobBoard.hasRunning(sessionId);
-          const hasUnreconciled = backgroundJobBoard.hasTerminalUnreconciled(sessionId);
+          const hasRunning2 = backgroundJobBoard.hasRunning(sessionId);
+          const hasUnreconciled2 = backgroundJobBoard.hasTerminalUnreconciled(sessionId);
           const now = Date.now();
           const gateFailCooldown = state.lastGateFailAt > 0 ? Math.max(0, GATE_FAIL_COOLDOWN_MS - (now - state.lastGateFailAt)) : 0;
           const bgActivityCooldown = state.lastBackgroundActivityAt > 0 ? Math.max(0, GATE_FAIL_COOLDOWN_MS - (now - state.lastBackgroundActivityAt)) : 0;
@@ -25496,11 +25537,11 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
             awaitingDoneCheck: state.awaitingDoneCheck,
             wakeInFlight: state.wakeInFlight,
             sentEventWake,
-            hasRunning,
-            hasUnreconciled,
+            hasRunning: hasRunning2,
+            hasUnreconciled: hasUnreconciled2,
             cooldownRemainingMs: cooldownRemaining
           });
-          if (!state.awaitingDoneCheck && !state.wakeInFlight && !sentEventWake && !hasRunning && !hasUnreconciled && cooldownRemaining === 0) {
+          if (!state.awaitingDoneCheck && !state.wakeInFlight && !sentEventWake && !hasRunning2 && !hasUnreconciled2 && cooldownRemaining === 0) {
             log("[deepwork-wakeup] firing gate directly from idle handler", {
               sessionID: sessionId,
               gateType: state.gate.type
@@ -37142,7 +37183,14 @@ var OhMyOpenCodeLite = async (ctx) => {
       await autoUpdateChecker.event(input);
       await interviewManager.handleEvent(input);
       await taskSessionManagerHook.event(input);
-      await deepworkWakeupHook.event(input);
+      try {
+        await deepworkWakeupHook.event(input);
+      } catch (err) {
+        log("[plugin] deepworkWakeupHook.event threw", {
+          error: err instanceof Error ? err.message : String(err),
+          eventType: event.type
+        });
+      }
       if (event.type === "permission.asked" || event.type === "question.asked") {
         companionManager.onWaitingInput();
       }
