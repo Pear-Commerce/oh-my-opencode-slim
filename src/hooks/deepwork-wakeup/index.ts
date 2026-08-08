@@ -2386,6 +2386,12 @@ export function createDeepworkWakeupHook(
     setGate(sessionID: string, gate: LoopGate | undefined): void {
       const state = getState(sessionID);
       state.gate = gate;
+      // Setting a gate is an explicit signal that this session is an
+      // autonomous loop. Activate continuation so the done-check and
+      // safety net fire even without /deepwork or background work.
+      if (gate) {
+        state.continuationActive = true;
+      }
       log('[deepwork-wakeup] gate set', {
         sessionID,
         gateType: gate?.type,
@@ -2422,6 +2428,12 @@ export function createDeepworkWakeupHook(
       const state = getState(sessionID);
       state.consultation = consultation;
       state.consultationPending = false;
+      // Setting a consultation is an explicit signal that this session is
+      // an autonomous loop. Activate continuation so the done-check and
+      // safety net fire even without /deepwork or background work.
+      if (consultation) {
+        state.continuationActive = true;
+      }
       log('[deepwork-wakeup] consultation set', {
         sessionID,
         intervalMinutes: consultation?.intervalMinutes,
