@@ -180,10 +180,10 @@ const EVENT_WAKEUP_MESSAGE =
   'Background work is ready to reconcile. Review the Background Job Board and continue: reconcile terminal results, validate, and proceed to the next phase or finish if all work is complete.';
 
 const DONE_CHECK_MESSAGE =
-  'Have you completed all work in the current deepwork scope, with any remaining work explicitly deferred and documented? Respond with one word: yes or no.';
+  'Are you at a natural stopping point — all work complete or explicitly deferred? If background work is still running, answer yes (you are correctly waiting). Respond with one word: yes or no.';
 
 const CONTINUE_MESSAGE =
-  'Continue your deepwork. Pick up where you left off and proceed with the next unfinished task.';
+  'Continue your deepwork. If you were waiting on background work, check the Background Job Board — it may have completed. Otherwise pick up the next unfinished task and proceed.';
 
 const GATE_FAIL_MESSAGE =
   'The convergence gate failed. Review the gate output above, fix the issues, and continue.';
@@ -656,10 +656,15 @@ export function createDeepworkWakeupHook(
         // for >STALE_IDLE_THRESHOLD_MS without a done-check. This catches
         // stalls where the one-shot done-check from the idle handler was
         // blocked by a stale condition or never processed.
+        // BUT: skip if background work is genuinely running — the
+        // orchestrator is correctly idle waiting for it, and the
+        // event-driven wake handles completion.
         const idleAgeMs = Date.now() - state.lastIdleAt;
         if (idleAgeMs < STALE_IDLE_THRESHOLD_MS) return;
 
         const hasRunning = backgroundJobBoard.hasRunning(sessionID);
+        if (hasRunning) return;
+
         const hasUnreconciled =
           backgroundJobBoard.hasTerminalUnreconciled(sessionID);
         const hasPendingTask = hasPendingTaskCall?.(sessionID) ?? false;
@@ -2265,9 +2270,15 @@ export function createDeepworkWakeupHook(
           // is still blocked, the blocking condition is likely stale
           // (e.g. a cancelled task left a stuck pendingCall, or a
           // background job was dropped without being marked reconciled).
-          // Fire the done-check anyway to prevent the loop from dying.
+          // Fire the done-check to prevent the loop from dying.
+          // BUT: if hasRunning is true, background work is genuinely
+          // in progress — the orchestrator is correctly idle waiting for
+          // it. The event-driven wake (Case 2) handles completion. Don't
+          // fire the done-check in that case; it would waste a turn
+          // asking "are you done?" when the answer is obviously "no,
+          // I'm waiting for fix-5".
           const STALE_IDLE_THRESHOLD_MS = 60_000;
-          if (idleAgeMs > STALE_IDLE_THRESHOLD_MS) {
+          if (idleAgeMs > STALE_IDLE_THRESHOLD_MS && !hasRunning) {
             log(
               '[deepwork-wakeup] stale-idle safety net firing done-check after 60s block',
               {
