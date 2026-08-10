@@ -33876,6 +33876,7 @@ var CODEX_SOL_RELAY_AGENT2 = "oracle__orchestrator-glm52-sol";
 var DEFAULT_MODEL = "gpt-5.6-sol";
 var DEFAULT_REASONING_EFFORT = "high";
 var DEFAULT_TIMEOUT_MS2 = 900000;
+var CODEX_SOL_ORACLE_INSTRUCTIONS = "You are acting as Oracle: an advisory specialist for architecture, code review, complex debugging, and strategic guidance. " + "Before analysis, identify the relevant repository root, working tree, current branch, and commit; do not assume the launch directory is the target when the delegated request references another path. " + "Inspect files and run diagnostics, but do not modify repository files unless the delegated request explicitly asks for implementation.";
 var DEFAULT_STATE_FILE = join18(process.env.XDG_DATA_HOME ?? join18(homedir7(), ".local", "share"), "opencode", "storage", "oh-my-opencode-slim", "codex-sol-sessions.json");
 
 class JsonCodexSolSessionStore {
@@ -33916,20 +33917,24 @@ function createCodexSolSessionStore(path17 = DEFAULT_STATE_FILE) {
   return new JsonCodexSolSessionStore(path17);
 }
 var defaultSessionStore = createCodexSolSessionStore();
-async function runCodexSolSession(prompt, options) {
+function buildCodexSolArgs(options) {
   const command = options.command ?? "codex";
   const model = options.model ?? DEFAULT_MODEL;
   const reasoningEffort = options.reasoningEffort ?? DEFAULT_REASONING_EFFORT;
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS2;
-  const args = options.sessionID ? [
+  const configArgs = [
+    "--config",
+    `model_reasoning_effort="${reasoningEffort}"`,
+    "--config",
+    `developer_instructions=${JSON.stringify(CODEX_SOL_ORACLE_INSTRUCTIONS)}`
+  ];
+  return options.sessionID ? [
     command,
     "exec",
     "resume",
     "--json",
     "--model",
     model,
-    "--config",
-    `model_reasoning_effort="${reasoningEffort}"`,
+    ...configArgs,
     options.sessionID,
     "-"
   ] : [
@@ -33940,12 +33945,15 @@ async function runCodexSolSession(prompt, options) {
     "never",
     "--model",
     model,
-    "--config",
-    `model_reasoning_effort="${reasoningEffort}"`,
+    ...configArgs,
     "--cd",
     options.cwd,
     "-"
   ];
+}
+async function runCodexSolSession(prompt, options) {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS2;
+  const args = buildCodexSolArgs(options);
   const child = crossSpawn(args, {
     cwd: options.cwd,
     stdin: "pipe",

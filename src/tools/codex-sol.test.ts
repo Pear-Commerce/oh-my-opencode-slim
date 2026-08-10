@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ToolContext } from '@opencode-ai/plugin';
 import {
+  buildCodexSolArgs,
+  CODEX_SOL_ORACLE_INSTRUCTIONS,
   type CodexSolSessionStore,
   createCodexSolSessionStore,
   createCodexSolTool,
@@ -33,6 +35,50 @@ function memorySessionStore(): CodexSolSessionStore {
 }
 
 describe('codex_sol tool', () => {
+  test('adds the Oracle advisory contract to new Codex sessions', () => {
+    const args = buildCodexSolArgs({
+      command: '/path/to/codex',
+      cwd: '/workspace/project',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'high',
+    });
+
+    expect(args).toContain(
+      `developer_instructions=${JSON.stringify(CODEX_SOL_ORACLE_INSTRUCTIONS)}`,
+    );
+    expect(CODEX_SOL_ORACLE_INSTRUCTIONS).toContain(
+      'identify the relevant repository root, working tree, current branch, and commit',
+    );
+    expect(args).toEqual([
+      '/path/to/codex',
+      'exec',
+      '--json',
+      '--color',
+      'never',
+      '--model',
+      'gpt-5.6-sol',
+      '--config',
+      'model_reasoning_effort="high"',
+      '--config',
+      `developer_instructions=${JSON.stringify(CODEX_SOL_ORACLE_INSTRUCTIONS)}`,
+      '--cd',
+      '/workspace/project',
+      '-',
+    ]);
+  });
+
+  test('keeps the Oracle advisory contract when resuming Codex sessions', () => {
+    const args = buildCodexSolArgs({
+      cwd: '/workspace/project',
+      sessionID: 'codex-thread-1',
+    });
+
+    expect(args).toContain(
+      `developer_instructions=${JSON.stringify(CODEX_SOL_ORACLE_INSTRUCTIONS)}`,
+    );
+    expect(args).toContain('codex-thread-1');
+  });
+
   test('persists OpenCode-to-Codex thread mappings across store instances', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'codex-sol-store-'));
     const path = join(directory, 'sessions.json');
