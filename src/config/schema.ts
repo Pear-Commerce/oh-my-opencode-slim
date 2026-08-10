@@ -409,7 +409,7 @@ export const PluginConfigSchema = z
       .boolean()
       .optional()
       .describe(
-        'Route orchestrator-glm52-sol through a scoped DeepSeek oracle subagent that relays each delegation into a persistent local Codex CLI conversation.',
+        'Opt in to routing orchestrator-glm52-sol through a scoped DeepSeek oracle that relays into persistent Codex CLI. When false or absent, the scoped oracle uses its configured model directly.',
       ),
     codex_sol_command: z
       .string()

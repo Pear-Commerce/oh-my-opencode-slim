@@ -27,10 +27,6 @@ describe('scoped specialist build behavior', () => {
   test('Codex CLI mode keeps GLM as owner and turns its DeepSeek oracle into a relay', () => {
     const config = solConfig();
     config.use_codex_for_sol_orchestrator = true;
-    const oracle =
-      config.agents?.['orchestrator-glm52-sol']?.specialists?.oracle;
-    if (!oracle) throw new Error('test config is missing its oracle');
-    oracle.model = 'opencodex/deepseek-v4-flash-0731';
     const agents = createAgents(config);
     const owner = agents.find((a) => a.name === 'orchestrator-glm52-sol');
     const relay = agents.find(
@@ -40,6 +36,7 @@ describe('scoped specialist build behavior', () => {
     expect(owner?.config.model).toBe('opencodex/glm-5p2');
     expect(owner?.config.prompt).toContain('@oracle__orchestrator-glm52-sol');
     expect(relay?.config.model).toBe('opencodex/deepseek-v4-flash-0731');
+    expect(relay?.config.variant).toBeUndefined();
     expect(relay?.config.prompt).toContain(
       'For every user request, immediately call codex_sol exactly once.',
     );
@@ -49,6 +46,21 @@ describe('scoped specialist build behavior', () => {
     ).toBe('allow');
     expect(
       (owner?.config.permission as Record<string, unknown>)?.codex_sol,
+    ).toBe('deny');
+  });
+
+  test('disabled Codex CLI mode leaves the scoped oracle on direct Sol', () => {
+    const config = solConfig();
+    config.use_codex_for_sol_orchestrator = false;
+    const relay = createAgents(config).find(
+      (agent) => agent.name === 'oracle__orchestrator-glm52-sol',
+    );
+
+    expect(relay?.config.model).toBe('opencodex/gpt-5.6-sol');
+    expect(relay?.config.variant).toBe('high');
+    expect(relay?.config.prompt).not.toContain('call codex_sol exactly once');
+    expect(
+      (relay?.config.permission as Record<string, unknown>)?.codex_sol,
     ).toBe('deny');
   });
 

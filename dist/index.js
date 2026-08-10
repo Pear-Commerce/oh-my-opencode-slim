@@ -18827,7 +18827,7 @@ var PluginConfigSchema = z2.object({
   preset: z2.string().optional(),
   setDefaultAgent: z2.boolean().optional(),
   autoUpdate: z2.boolean().optional().describe("Disable automatic installation of plugin updates when false. Defaults to true."),
-  use_codex_for_sol_orchestrator: z2.boolean().optional().describe("Route orchestrator-glm52-sol through a scoped DeepSeek oracle subagent that relays each delegation into a persistent local Codex CLI conversation."),
+  use_codex_for_sol_orchestrator: z2.boolean().optional().describe("Opt in to routing orchestrator-glm52-sol through a scoped DeepSeek oracle that relays into persistent Codex CLI. When false or absent, the scoped oracle uses its configured model directly."),
   codex_sol_command: z2.string().min(1).optional().describe("Absolute path or command used to launch the Codex CLI for Sol orchestration. An absolute path is recommended for GUI hosts with a minimal PATH."),
   presets: z2.record(z2.string(), PresetSchema).optional(),
   agents: z2.record(z2.string(), AgentOverrideConfigSchema).optional(),
@@ -20281,6 +20281,8 @@ function createAgents(config) {
       scopedAgent.hidden = true;
       applyOverrides(scopedAgent, specialistOverride);
       if (config?.use_codex_for_sol_orchestrator === true && agent.name === CODEX_SOL_OWNER && specialistName === "oracle") {
+        scopedAgent.config.model = "opencodex/deepseek-v4-flash-0731";
+        delete scopedAgent.config.variant;
         scopedAgent.config.prompt = CODEX_SOL_RELAY_PROMPT;
       }
       scopedAgent.mcps = specialistOverride.mcps ?? getAgentMcpList(specialistName, config) ?? [];
@@ -24474,8 +24476,8 @@ function loadPersistedConsultation(directory, sessionID) {
   }
 }
 var EVENT_WAKEUP_MESSAGE = "Background work is ready to reconcile. Review the Background Job Board and continue: reconcile terminal results, validate, and proceed to the next phase or finish if all work is complete.";
-var DONE_CHECK_MESSAGE = "Are you at a natural stopping point — all work complete or explicitly deferred? If background work is still running, answer yes (you are correctly waiting). Respond with one word: yes or no.";
-var CONTINUE_MESSAGE = "Continue your deepwork. If you were waiting on background work, check the Background Job Board — it may have completed. Otherwise pick up the next unfinished task and proceed.";
+var DONE_CHECK_MESSAGE = "Is every task in the current deepwork scope complete? Deferred, postponed, skipped, or otherwise unfinished work is not complete: answer no so you can continue it now. Respond with one word: yes or no.";
+var CONTINUE_MESSAGE = "Continue your deepwork now. Resume deferred, postponed, skipped, or otherwise unfinished work; pick the next actionable task and proceed. If background work completed, reconcile it first.";
 var GATE_FAIL_MESSAGE = "The convergence gate failed. Review the gate output above, fix the issues, and continue.";
 var COMPACT_WRITE_MESSAGE = [
   "Your context window is approaching its limit. Before automatic compaction,",

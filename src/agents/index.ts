@@ -559,6 +559,8 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
         agent.name === CODEX_SOL_OWNER &&
         specialistName === 'oracle'
       ) {
+        scopedAgent.config.model = 'opencodex/deepseek-v4-flash-0731';
+        delete scopedAgent.config.variant;
         scopedAgent.config.prompt = CODEX_SOL_RELAY_PROMPT;
       }
 

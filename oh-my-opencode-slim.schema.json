@@ -13,7 +13,7 @@
       "type": "boolean"
     },
     "use_codex_for_sol_orchestrator": {
-      "description": "Route orchestrator-glm52-sol through a scoped DeepSeek oracle subagent that relays each delegation into a persistent local Codex CLI conversation.",
+      "description": "Opt in to routing orchestrator-glm52-sol through a scoped DeepSeek oracle that relays into persistent Codex CLI. When false or absent, the scoped oracle uses its configured model directly.",
       "type": "boolean"
     },
     "codex_sol_command": {
