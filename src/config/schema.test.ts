@@ -5,6 +5,18 @@ import {
   SpecialistNameSchema,
 } from './schema';
 
+describe('use_codex_for_sol_orchestrator', () => {
+  test('is off when absent and accepts an explicit opt-in', () => {
+    expect(
+      PluginConfigSchema.parse({}).use_codex_for_sol_orchestrator,
+    ).toBeUndefined();
+    expect(
+      PluginConfigSchema.parse({ use_codex_for_sol_orchestrator: true })
+        .use_codex_for_sol_orchestrator,
+    ).toBe(true);
+  });
+});
+
 describe('SpecialistNameSchema', () => {
   test('accepts the six specialist names', () => {
     for (const name of [

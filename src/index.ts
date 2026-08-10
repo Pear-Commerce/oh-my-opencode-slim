@@ -51,6 +51,7 @@ import {
   ast_grep_search,
   createAcpRunTool,
   createCancelTaskTool,
+  createCodexSolTool,
   createCouncilTool,
   createPresetManager,
   createSetLoopGateTool,
@@ -177,6 +178,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
   let companionManager: CompanionManager;
   let councilTools: Record<string, unknown>;
   let cancelTaskTools: Record<string, unknown>;
+  let codexSolTools: Record<string, unknown>;
   let setLoopGateTools: Record<string, unknown>;
   let setPeriodicConsultationTools: Record<string, unknown>;
   let acpRunTools: Record<string, ReturnType<typeof createAcpRunTool>>;
@@ -279,6 +281,10 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     acpRunTools =
       Object.keys(config.acpAgents ?? {}).length > 0
         ? { acp_run: createAcpRunTool(config.acpAgents) }
+        : {};
+    codexSolTools =
+      config.use_codex_for_sol_orchestrator === true
+        ? { codex_sol: createCodexSolTool() }
         : {};
     webfetch = createWebfetchTool(ctx);
     backgroundJobBoard = new BackgroundJobBoard({
@@ -542,6 +548,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       Object.keys(setLoopGateTools).length +
       Object.keys(setPeriodicConsultationTools).length +
       Object.keys(acpRunTools).length +
+      Object.keys(codexSolTools).length +
       1 + // webfetch
       2; // ast_grep_search, ast_grep_replace
   } catch (err) {
@@ -627,6 +634,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     tool: {
       ...councilTools,
       ...cancelTaskTools,
+      ...codexSolTools,
       ...setLoopGateTools,
       ...setPeriodicConsultationTools,
       ...acpRunTools,

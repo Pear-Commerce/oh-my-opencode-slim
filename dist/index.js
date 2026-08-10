@@ -18827,6 +18827,7 @@ var PluginConfigSchema = z2.object({
   preset: z2.string().optional(),
   setDefaultAgent: z2.boolean().optional(),
   autoUpdate: z2.boolean().optional().describe("Disable automatic installation of plugin updates when false. Defaults to true."),
+  use_codex_for_sol_orchestrator: z2.boolean().optional().describe("Route the orchestrator-glm52-sol oracle lane through the local Codex CLI instead of an OpenCode subagent."),
   presets: z2.record(z2.string(), PresetSchema).optional(),
   agents: z2.record(z2.string(), AgentOverrideConfigSchema).optional(),
   disabled_agents: z2.array(z2.string()).optional().describe("Agent names to disable completely. " + "Disabled agents are not instantiated and cannot be delegated to. " + "Orchestrator and council internal agents (councillor) cannot be disabled. " + "By default, 'observer' is disabled. Remove it from this list and configure a vision-capable model to enable."),
@@ -19984,6 +19985,7 @@ ${customAppendPrompt}`;
 // src/agents/index.ts
 var COUNCIL_TOOL_ALLOWED_AGENTS = new Set(["council"]);
 var SAFE_AGENT_ALIAS_RE = /^[a-z][a-z0-9_-]*$/i;
+var CODEX_SOL_ORCHESTRATOR = "orchestrator-glm52-sol";
 function normalizeDisplayName(displayName) {
   const trimmed = displayName.trim();
   return trimmed.startsWith("@") ? trimmed.slice(1) : trimmed;
@@ -20111,11 +20113,13 @@ function applyDefaultPermissions(agent, configuredSkills, config, skillAgentName
   const questionPerm = existing.question === "deny" ? "deny" : "allow";
   const councilSessionPerm = COUNCIL_TOOL_ALLOWED_AGENTS.has(agent.name) ? existing.council_session ?? "allow" : "deny";
   const cancelTaskPerm = isOrchestratorClassAgent(config, agent.name) ? existing.cancel_task ?? "allow" : "deny";
+  const codexSolPerm = config?.use_codex_for_sol_orchestrator === true && agent.name === CODEX_SOL_ORCHESTRATOR ? "allow" : "deny";
   agent.config.permission = {
     ...existing,
     question: questionPerm,
     council_session: councilSessionPerm,
     cancel_task: cancelTaskPerm,
+    codex_sol: codexSolPerm,
     skill: {
       ...typeof existing.skill === "object" ? existing.skill : {},
       ...skillPermissions
@@ -20247,6 +20251,9 @@ function createAgents(config) {
     for (const [specialistName, specialistOverride] of Object.entries(specialists)) {
       if (disabled.has(specialistName))
         continue;
+      if (config?.use_codex_for_sol_orchestrator === true && agent.name === CODEX_SOL_ORCHESTRATOR && specialistName === "oracle") {
+        continue;
+      }
       const factory = SUBAGENT_FACTORIES[specialistName];
       if (!factory)
         continue;
@@ -20366,6 +20373,16 @@ ${extraPrompt}`;
     const remap = scopedRemap.get(primaryOrchestrator.name);
     if (remap) {
       injectScopedSpecialistNames(primaryOrchestrator, remap, displayNameMap);
+    }
+  }
+  if (config?.use_codex_for_sol_orchestrator === true) {
+    const solOrchestrator = customOrchestrators.find((agent) => agent.name === CODEX_SOL_ORCHESTRATOR);
+    if (solOrchestrator?.config.prompt) {
+      solOrchestrator.config.prompt = solOrchestrator.config.prompt.replace(/@oracle\b/g, "codex_sol").concat(`
+
+<CodexSolRouting>
+`, "For every codex_sol lane, call the codex_sol tool directly instead of the task tool. ", "Pass exactly the prompt you would have sent to the oracle subagent. ", "Do not include OpenCode system instructions, this orchestrator prompt, conversation history, or wrapper text. ", `The tool runs Codex CLI in the current working directory and returns its answer.
+`, "</CodexSolRouting>");
     }
   }
   return [orchestrator, ...customOrchestrators, ...allSubAgents];
@@ -33842,11 +33859,98 @@ function unknownTaskOutput(taskID, message) {
   ].join(`
 `);
 }
+// src/tools/codex-sol.ts
+init_compat();
+import { tool as tool4 } from "@opencode-ai/plugin";
+var CODEX_SOL_ORCHESTRATOR2 = "orchestrator-glm52-sol";
+var DEFAULT_MODEL = "gpt-5.6-sol";
+var DEFAULT_TIMEOUT_MS2 = 900000;
+async function runCodexSol(prompt, options) {
+  const command = options.command ?? "codex";
+  const model = options.model ?? DEFAULT_MODEL;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS2;
+  const child = crossSpawn([
+    command,
+    "exec",
+    "--ephemeral",
+    "--color",
+    "never",
+    "--model",
+    model,
+    "--cd",
+    options.cwd,
+    "-"
+  ], {
+    cwd: options.cwd,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: process.env
+  });
+  child.proc.stdin?.end(prompt);
+  let timer;
+  let abortHandler;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Codex CLI timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  const aborted = new Promise((_, reject) => {
+    if (!options.signal)
+      return;
+    abortHandler = () => reject(new Error("Codex CLI run was aborted"));
+    if (options.signal.aborted) {
+      abortHandler();
+      return;
+    }
+    options.signal.addEventListener("abort", abortHandler, { once: true });
+  });
+  try {
+    const exitCode = await Promise.race([child.exited, timeout, aborted]);
+    const [stdout, stderr] = await Promise.all([
+      child.stdout(),
+      child.stderr()
+    ]);
+    const answer = stdout.trim();
+    if (exitCode !== 0) {
+      throw new Error(`Codex CLI exited with code ${exitCode}: ${stderr.trim() || answer || "no output"}`);
+    }
+    if (!answer) {
+      throw new Error(`Codex CLI completed without an answer${stderr.trim() ? `: ${stderr.trim()}` : ""}`);
+    }
+    return answer;
+  } finally {
+    if (timer)
+      clearTimeout(timer);
+    if (abortHandler && options.signal) {
+      options.signal.removeEventListener("abort", abortHandler);
+    }
+    if (child.exitCode === null)
+      child.kill("SIGTERM");
+  }
+}
+function createCodexSolTool(options) {
+  const runner = options?.runner ?? runCodexSol;
+  return tool4({
+    description: "Run the Sol reasoning lane through the local Codex CLI and return its answer without creating an OpenCode subagent.",
+    args: {
+      prompt: tool4.schema.string().min(1).describe("The exact oracle delegation prompt to send to Codex")
+    },
+    async execute(args, ctx) {
+      if (ctx.agent !== CODEX_SOL_ORCHESTRATOR2) {
+        throw new Error(`codex_sol can only be used by ${CODEX_SOL_ORCHESTRATOR2}`);
+      }
+      return runner(args.prompt, {
+        cwd: ctx.directory,
+        model: options?.model ?? DEFAULT_MODEL,
+        signal: ctx.abort
+      });
+    }
+  });
+}
 // src/tools/council.ts
 import {
-  tool as tool4
+  tool as tool5
 } from "@opencode-ai/plugin";
-var z6 = tool4.schema;
+var z6 = tool5.schema;
 function formatModelComposition(councillorResults) {
   return councillorResults.map((cr) => {
     const shortModel = shortModelLabel(cr.model);
@@ -33854,7 +33958,7 @@ function formatModelComposition(councillorResults) {
   }).join(", ");
 }
 function createCouncilTool(_ctx, councilManager) {
-  const council_session = tool4({
+  const council_session = tool5({
     description: `Launch a multi-LLM council session for consensus-based analysis.
 
 Sends the prompt to multiple models (councillors) in parallel and returns their formatted responses for you to synthesize.
@@ -34134,11 +34238,11 @@ Usage: /preset <name> to switch.`);
 }
 // src/tools/set-loop-gate.ts
 import {
-  tool as tool5
+  tool as tool6
 } from "@opencode-ai/plugin";
-var z7 = tool5.schema;
+var z7 = tool6.schema;
 function createSetLoopGateTool(options) {
-  const set_loop_gate = tool5({
+  const set_loop_gate = tool6({
     description: `Set a convergence gate for the current deepwork loop.
 
 When set, the periodic wakeup timer runs the gate instead of asking "are you done?"
@@ -34233,10 +34337,10 @@ The loop will continue until the oracle responds PASS.`;
   return { set_loop_gate };
 }
 // src/tools/set-periodic-consultation.ts
-import { tool as tool6 } from "@opencode-ai/plugin";
-var z8 = tool6.schema;
+import { tool as tool7 } from "@opencode-ai/plugin";
+var z8 = tool7.schema;
 function createSetPeriodicConsultationTool(options) {
-  const set_periodic_consultation = tool6({
+  const set_periodic_consultation = tool7({
     description: `Set a periodic consultation ("babysitter") that fires every X minutes.
 
 Every \`intervalMinutes\`, the hook sends the orchestrator a prompt to delegate to its
@@ -34336,7 +34440,7 @@ var WEBFETCH_DESCRIPTION = "Fetch a URL with better extraction for static/docs p
 import os6 from "node:os";
 import path21 from "node:path";
 import {
-  tool as tool7
+  tool as tool8
 } from "@opencode-ai/plugin";
 
 // src/tools/smartfetch/binary.ts
@@ -36139,10 +36243,10 @@ async function runSecondaryModelWithFallback(client, directory, models, prompt, 
 }
 
 // src/tools/smartfetch/tool.ts
-var z9 = tool7.schema;
+var z9 = tool8.schema;
 function createWebfetchTool(pluginCtx, options = {}) {
   const binaryDir = options.binaryDir || path21.join(os6.tmpdir(), "opencode-smartfetch");
-  return tool7({
+  return tool8({
     description: WEBFETCH_DESCRIPTION,
     args: {
       url: z9.httpUrl(),
@@ -36749,6 +36853,7 @@ var OhMyOpenCodeLite = async (ctx) => {
   let companionManager;
   let councilTools;
   let cancelTaskTools;
+  let codexSolTools;
   let setLoopGateTools;
   let setPeriodicConsultationTools;
   let acpRunTools;
@@ -36804,6 +36909,7 @@ var OhMyOpenCodeLite = async (ctx) => {
     }
     mcps = createBuiltinMcps(config.disabled_mcps, config.websearch);
     acpRunTools = Object.keys(config.acpAgents ?? {}).length > 0 ? { acp_run: createAcpRunTool(config.acpAgents) } : {};
+    codexSolTools = config.use_codex_for_sol_orchestrator === true ? { codex_sol: createCodexSolTool() } : {};
     webfetch = createWebfetchTool(ctx);
     backgroundJobBoard = new BackgroundJobBoard({
       maxReusablePerAgent: config.backgroundJobs?.maxSessionsPerAgent ?? 2,
@@ -36948,7 +37054,7 @@ var OhMyOpenCodeLite = async (ctx) => {
         return false;
       }
     });
-    toolCount = Object.keys(councilTools).length + Object.keys(cancelTaskTools).length + Object.keys(setLoopGateTools).length + Object.keys(setPeriodicConsultationTools).length + Object.keys(acpRunTools).length + 1 + 2;
+    toolCount = Object.keys(councilTools).length + Object.keys(cancelTaskTools).length + Object.keys(setLoopGateTools).length + Object.keys(setPeriodicConsultationTools).length + Object.keys(acpRunTools).length + Object.keys(codexSolTools).length + 1 + 2;
   } catch (err) {
     log("[plugin] FATAL: init failed", String(err));
     await appLog(ctx, "error", `INIT FAILED: ${String(err)}. Report at github.com/alvinunreal/oh-my-opencode-slim/issues/310`);
@@ -37007,6 +37113,7 @@ var OhMyOpenCodeLite = async (ctx) => {
     tool: {
       ...councilTools,
       ...cancelTaskTools,
+      ...codexSolTools,
       ...setLoopGateTools,
       ...setPeriodicConsultationTools,
       ...acpRunTools,

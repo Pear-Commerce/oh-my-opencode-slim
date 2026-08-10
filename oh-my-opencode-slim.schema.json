@@ -12,6 +12,10 @@
       "description": "Disable automatic installation of plugin updates when false. Defaults to true.",
       "type": "boolean"
     },
+    "use_codex_for_sol_orchestrator": {
+      "description": "Route the orchestrator-glm52-sol oracle lane through the local Codex CLI instead of an OpenCode subagent.",
+      "type": "boolean"
+    },
     "presets": {
       "type": "object",
       "propertyNames": {

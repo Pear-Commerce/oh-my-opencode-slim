@@ -24,6 +24,24 @@ function solConfig(): PluginConfig {
 }
 
 describe('scoped specialist build behavior', () => {
+  test('Codex CLI mode replaces the scoped oracle with direct tool routing', () => {
+    const config = {
+      ...solConfig(),
+      use_codex_for_sol_orchestrator: true,
+    } satisfies PluginConfig;
+    const agents = createAgents(config);
+    const owner = agents.find((a) => a.name === 'orchestrator-glm52-sol');
+
+    expect(
+      agents.find((a) => a.name === 'oracle__orchestrator-glm52-sol'),
+    ).toBeUndefined();
+    expect(owner?.config.prompt).toContain('call the codex_sol tool directly');
+    expect(owner?.config.prompt).not.toMatch(/@oracle\b/);
+    expect(
+      (owner?.config.permission as Record<string, unknown>)?.codex_sol,
+    ).toBe('allow');
+  });
+
   test('scoped oracle is built with overridden model and variant', () => {
     const agents = createAgents(solConfig());
     const scoped = agents.find(

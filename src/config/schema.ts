@@ -405,6 +405,12 @@ export const PluginConfigSchema = z
       .describe(
         'Disable automatic installation of plugin updates when false. Defaults to true.',
       ),
+    use_codex_for_sol_orchestrator: z
+      .boolean()
+      .optional()
+      .describe(
+        'Route the orchestrator-glm52-sol oracle lane through the local Codex CLI instead of an OpenCode subagent.',
+      ),
     presets: z.record(z.string(), PresetSchema).optional(),
     agents: z.record(z.string(), AgentOverrideConfigSchema).optional(),
     disabled_agents: z

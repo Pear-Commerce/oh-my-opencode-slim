@@ -41,6 +41,7 @@ type AgentFactory = (
 
 const COUNCIL_TOOL_ALLOWED_AGENTS = new Set(['council']);
 const SAFE_AGENT_ALIAS_RE = /^[a-z][a-z0-9_-]*$/i;
+const CODEX_SOL_ORCHESTRATOR = 'orchestrator-glm52-sol';
 
 function normalizeDisplayName(displayName: string): string {
   const trimmed = displayName.trim();
@@ -274,12 +275,18 @@ function applyDefaultPermissions(
   const cancelTaskPerm = isOrchestratorClassAgent(config, agent.name)
     ? (existing.cancel_task ?? 'allow')
     : 'deny';
+  const codexSolPerm =
+    config?.use_codex_for_sol_orchestrator === true &&
+    agent.name === CODEX_SOL_ORCHESTRATOR
+      ? 'allow'
+      : 'deny';
 
   agent.config.permission = {
     ...existing,
     question: questionPerm,
     council_session: councilSessionPerm,
     cancel_task: cancelTaskPerm,
+    codex_sol: codexSolPerm,
     // Apply skill permissions as nested object under 'skill' key
     skill: {
       ...(typeof existing.skill === 'object' ? existing.skill : {}),
@@ -500,6 +507,14 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
       // rewrite occurs (the owner prompt already excludes disabled agents).
       if (disabled.has(specialistName)) continue;
 
+      if (
+        config?.use_codex_for_sol_orchestrator === true &&
+        agent.name === CODEX_SOL_ORCHESTRATOR &&
+        specialistName === 'oracle'
+      ) {
+        continue;
+      }
+
       const factory = SUBAGENT_FACTORIES[specialistName as SubagentName];
       if (!factory) continue; // defensive: schema enum gates valid names
 
@@ -705,6 +720,24 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
     const remap = scopedRemap.get(primaryOrchestrator.name);
     if (remap) {
       injectScopedSpecialistNames(primaryOrchestrator, remap, displayNameMap);
+    }
+  }
+
+  if (config?.use_codex_for_sol_orchestrator === true) {
+    const solOrchestrator = customOrchestrators.find(
+      (agent) => agent.name === CODEX_SOL_ORCHESTRATOR,
+    );
+    if (solOrchestrator?.config.prompt) {
+      solOrchestrator.config.prompt = solOrchestrator.config.prompt
+        .replace(/@oracle\b/g, 'codex_sol')
+        .concat(
+          '\n\n<CodexSolRouting>\n',
+          'For every codex_sol lane, call the codex_sol tool directly instead of the task tool. ',
+          'Pass exactly the prompt you would have sent to the oracle subagent. ',
+          'Do not include OpenCode system instructions, this orchestrator prompt, conversation history, or wrapper text. ',
+          'The tool runs Codex CLI in the current working directory and returns its answer.\n',
+          '</CodexSolRouting>',
+        );
     }
   }
 
