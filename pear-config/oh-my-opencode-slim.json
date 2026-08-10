@@ -2,206 +2,206 @@
   "$schema": "https://unpkg.com/oh-my-opencode-slim@latest/oh-my-opencode-slim.schema.json",
   "preset": "orchestrator-glm52",
   "presets": {
-    "fireworks-openrouter": {
+    "opencodex-mixed": {
       "orchestrator": {
-        "model": "openrouter/openai/gpt-5.5",
+        "model": "opencodex/gpt-5.5",
         "variant": "medium",
         "skills": ["*"],
         "mcps": ["*", "!context7"]
       },
       "oracle": {
-        "model": "openrouter/anthropic/claude-opus-4.8",
+        "model": "opencodex/gpt-5.6-sol",
         "variant": "xhigh",
         "skills": ["simplify"],
         "mcps": []
       },
       "council": {
-        "model": "openrouter/anthropic/claude-sonnet-4.6",
+        "model": "opencodex/gpt-5.5",
         "variant": "high",
         "skills": [],
         "mcps": []
       },
       "librarian": {
-        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "model": "opencodex/glm-5p2",
         "skills": [],
         "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
+        "model": "opencodex/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       },
       "designer": {
-        "model": "openrouter/anthropic/claude-sonnet-4.6",
+        "model": "opencodex/gpt-5.5",
         "variant": "high",
         "skills": [],
         "mcps": []
       },
       "fixer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
+        "model": "opencodex/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       }
     },
     "orchestrator-gpt55-medium": {
       "orchestrator": {
-        "model": "openrouter/openai/gpt-5.5",
+        "model": "opencodex/gpt-5.5",
         "variant": "medium",
         "skills": ["*"],
         "mcps": ["*", "!context7"]
       },
       "oracle": {
-        "model": "openrouter/anthropic/claude-opus-4.8",
+        "model": "opencodex/gpt-5.6-sol",
         "variant": "xhigh",
         "skills": ["simplify"],
         "mcps": []
       },
       "council": {
-        "model": "openrouter/anthropic/claude-sonnet-4.6",
+        "model": "opencodex/gpt-5.5",
         "variant": "high",
         "skills": [],
         "mcps": []
       },
       "librarian": {
-        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "model": "opencodex/glm-5p2",
         "skills": [],
         "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
+        "model": "opencodex/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       },
       "designer": {
-        "model": "openrouter/anthropic/claude-sonnet-4.6",
+        "model": "opencodex/gpt-5.5",
         "variant": "high",
         "skills": [],
         "mcps": []
       },
       "fixer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
+        "model": "opencodex/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       }
     },
     "orchestrator-gpt55-high": {
       "orchestrator": {
-        "model": "openrouter/openai/gpt-5.5",
+        "model": "opencodex/gpt-5.5",
         "variant": "high",
         "skills": ["*"],
         "mcps": ["*", "!context7"]
       },
       "oracle": {
-        "model": "openrouter/anthropic/claude-opus-4.8",
+        "model": "opencodex/gpt-5.6-sol",
         "variant": "xhigh",
         "skills": ["simplify"],
         "mcps": []
       },
       "council": {
-        "model": "openrouter/anthropic/claude-sonnet-4.6",
+        "model": "opencodex/gpt-5.5",
         "variant": "high",
         "skills": [],
         "mcps": []
       },
       "librarian": {
-        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "model": "opencodex/glm-5p2",
         "skills": [],
         "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
+        "model": "opencodex/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       },
       "designer": {
-        "model": "openrouter/anthropic/claude-sonnet-4.6",
+        "model": "opencodex/gpt-5.5",
         "variant": "high",
         "skills": [],
         "mcps": []
       },
       "fixer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
+        "model": "opencodex/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       }
     },
     "orchestrator-gpt55-xhigh": {
       "orchestrator": {
-        "model": "openrouter/openai/gpt-5.5",
+        "model": "opencodex/gpt-5.5",
         "variant": "xhigh",
         "skills": ["*"],
         "mcps": ["*", "!context7"]
       },
       "oracle": {
-        "model": "openrouter/anthropic/claude-opus-4.8",
+        "model": "opencodex/gpt-5.6-sol",
         "variant": "xhigh",
         "skills": ["simplify"],
         "mcps": []
       },
       "council": {
-        "model": "openrouter/anthropic/claude-sonnet-4.6",
+        "model": "opencodex/gpt-5.5",
         "variant": "high",
         "skills": [],
         "mcps": []
       },
       "librarian": {
-        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "model": "opencodex/glm-5p2",
         "skills": [],
         "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
+        "model": "opencodex/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       },
       "designer": {
-        "model": "openrouter/anthropic/claude-sonnet-4.6",
+        "model": "opencodex/gpt-5.5",
         "variant": "high",
         "skills": [],
         "mcps": []
       },
       "fixer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
+        "model": "opencodex/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       }
     },
     "orchestrator-glm52": {
       "orchestrator": {
-        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "model": "opencodex/glm-5p2",
         "skills": ["*"],
         "mcps": ["*", "!context7"]
       },
       "oracle": {
-        "model": "openrouter/anthropic/claude-opus-4.8",
+        "model": "opencodex/gpt-5.6-sol",
         "variant": "xhigh",
         "skills": ["simplify"],
         "mcps": []
       },
       "council": {
-        "model": "openrouter/anthropic/claude-sonnet-4.6",
+        "model": "opencodex/gpt-5.5",
         "variant": "high",
         "skills": [],
         "mcps": []
       },
       "librarian": {
-        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "model": "opencodex/glm-5p2",
         "skills": [],
         "mcps": ["websearch", "context7", "gh_grep"]
       },
       "explorer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
+        "model": "opencodex/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       },
       "designer": {
-        "model": "openrouter/anthropic/claude-sonnet-4.6",
+        "model": "opencodex/gpt-5.5",
         "variant": "high",
         "skills": [],
         "mcps": []
       },
       "fixer": {
-        "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
+        "model": "opencodex/deepseek-v4-flash-0731",
         "skills": [],
         "mcps": []
       }
@@ -211,46 +211,46 @@
   "agents": {
     "orchestrator-gpt55-medium": {
       "orchestrator_class": true,
-      "model": "openrouter/openai/gpt-5.5",
+      "model": "opencodex/gpt-5.5",
       "variant": "medium",
       "skills": ["*"],
       "mcps": ["*", "!context7"]
     },
     "orchestrator-gpt55-high": {
       "orchestrator_class": true,
-      "model": "openrouter/openai/gpt-5.5",
+      "model": "opencodex/gpt-5.5",
       "variant": "high",
       "skills": ["*"],
       "mcps": ["*", "!context7"]
     },
     "orchestrator-gpt55-xhigh": {
       "orchestrator_class": true,
-      "model": "openrouter/openai/gpt-5.5",
+      "model": "opencodex/gpt-5.5",
       "variant": "xhigh",
       "skills": ["*"],
       "mcps": ["*", "!context7"]
     },
     "orchestrator-deepseek-high": {
       "orchestrator_class": true,
-      "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-pro",
+      "model": "opencodex/deepseek-v4-flash-0731",
       "variant": "high",
       "skills": ["*"],
       "mcps": ["*", "!context7"]
     },
     "orchestrator-glm52": {
       "orchestrator_class": true,
-      "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+      "model": "opencodex/glm-5p2",
       "skills": ["*"],
       "mcps": ["*", "!context7"]
     },
     "orchestrator-glm52-sol": {
       "orchestrator_class": true,
-      "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+      "model": "opencodex/glm-5p2",
       "skills": ["*"],
       "mcps": ["*", "!context7"],
       "specialists": {
         "oracle": {
-          "model": "openrouter/openai/gpt-5.6-sol",
+          "model": "opencodex/gpt-5.6-sol",
           "variant": "high",
           "skills": ["simplify"],
           "mcps": []
@@ -264,17 +264,17 @@
     "presets": {
       "default": {
         "architect": {
-          "model": "openrouter/anthropic/claude-opus-4.8",
+          "model": "opencodex/gpt-5.6-sol",
           "variant": "xhigh",
           "prompt": "Focus on architecture, maintainability, data integrity, and long-term risk."
         },
         "implementer": {
-          "model": "openrouter/openai/gpt-5.5",
+          "model": "opencodex/gpt-5.5",
           "variant": "xhigh",
           "prompt": "Focus on practical implementation, correctness, and delivery trade-offs."
         },
         "oss-reviewer": {
-          "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-pro",
+          "model": "opencodex/deepseek-v4-flash-0731",
           "variant": "high",
           "prompt": "Focus on independent code review, simplification, and edge cases."
         }

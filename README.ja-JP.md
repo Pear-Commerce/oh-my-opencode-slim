@@ -110,21 +110,21 @@ bunx oh-my-opencode-slim@latest install
   "preset": "openai",
   "presets": {
     "openai": {
-      "orchestrator": { "model": "openai/gpt-5.5", "variant": "medium", "skills": ["*"], "mcps": ["*", "!context7"] },
-      "oracle": { "model": "openai/gpt-5.5", "variant": "high", "skills": ["simplify"], "mcps": [] },
-      "librarian": { "model": "openai/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": ["websearch", "context7", "gh_grep"] },
-      "explorer": { "model": "openai/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": [] },
-      "designer": { "model": "openai/gpt-5.4-mini", "variant": "medium", "skills": [], "mcps": [] },
-      "fixer": { "model": "openai/gpt-5.5", "variant": "low", "skills": [], "mcps": [] }
+      "orchestrator": { "model": "opencodex/gpt-5.5", "variant": "medium", "skills": ["*"], "mcps": ["*", "!context7"] },
+      "oracle": { "model": "opencodex/gpt-5.5", "variant": "high", "skills": ["simplify"], "mcps": [] },
+      "librarian": { "model": "opencodex/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": ["websearch", "context7", "gh_grep"] },
+      "explorer": { "model": "opencodex/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": [] },
+      "designer": { "model": "opencodex/gpt-5.4-mini", "variant": "medium", "skills": [], "mcps": [] },
+      "fixer": { "model": "opencodex/gpt-5.5", "variant": "low", "skills": [], "mcps": [] }
     },
     "opencode-go": {
-      "orchestrator": { "model": "opencode-go/glm-5.1", "skills": [ "*" ], "mcps": [ "*", "!context7" ] },
-      "oracle": { "model": "opencode-go/deepseek-v4-pro", "variant": "max", "skills": ["simplify"], "mcps": [] },
-      "council": { "model": "opencode-go/deepseek-v4-pro", "variant": "high", "skills": [], "mcps": [] },
-      "librarian": { "model": "opencode-go/minimax-m2.7", "skills": [], "mcps": [ "websearch", "context7", "gh_grep" ] },
-      "explorer": { "model": "opencode-go/minimax-m2.7", "skills": [], "mcps": [] },
-      "designer": { "model": "opencode-go/kimi-k2.6", "variant": "medium", "skills": [], "mcps": [] },
-      "fixer": { "model": "opencode-go/deepseek-v4-flash", "variant": "high", "skills": [], "mcps": [] }
+      "orchestrator": { "model": "opencodex/glm-5p2", "skills": [ "*" ], "mcps": [ "*", "!context7" ] },
+      "oracle": { "model": "opencodex/deepseek-v4-flash-0731", "variant": "max", "skills": ["simplify"], "mcps": [] },
+      "council": { "model": "opencodex/deepseek-v4-flash-0731", "variant": "high", "skills": [], "mcps": [] },
+      "librarian": { "model": "opencodex/glm-5p2", "skills": [], "mcps": [ "websearch", "context7", "gh_grep" ] },
+      "explorer": { "model": "opencodex/glm-5p2", "skills": [], "mcps": [] },
+      "designer": { "model": "opencodex/kimi-k2p7-code", "variant": "medium", "skills": [], "mcps": [] },
+      "fixer": { "model": "opencodex/deepseek-v4-flash-0731", "variant": "high", "skills": [], "mcps": [] }
     }
   }
 }
@@ -270,12 +270,12 @@ Worktrees は、Git worktree を `.slim/worktrees/<slug>/` 配下の安全で隔
   </tr>
   <tr>
     <td colspan="2">
-      <b>Default Model:</b> <code>openai/gpt-5.5</code>
+      <b>Default Model:</b> <code>opencodex/gpt-5.5</code>
     </td>
   </tr>
   <tr>
     <td colspan="2">
-      <b>Recommended Models:</b> <code>openai/gpt-5.5</code> <code>anthropic/claude-opus-4.6</code>
+      <b>Recommended Models:</b> <code>opencodex/gpt-5.5</code> <code>anthropic/claude-opus-4.6</code>
     </td>
   </tr>
   <tr>
@@ -311,12 +311,12 @@ Worktrees は、Git worktree を `.slim/worktrees/<slug>/` 配下の安全で隔
   </tr>
   <tr>
     <td colspan="2">
-      <b>Default Model:</b> <code>openai/gpt-5.4-mini</code>
+      <b>Default Model:</b> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
     <td colspan="2">
-      <b>Recommended Models:</b> <code>cerebras/zai-glm-4.7</code> <code>fireworks-ai/accounts/fireworks/routers/kimi-k2p5-turbo</code> <code>openai/gpt-5.4-mini</code>
+      <b>Recommended Models:</b> <code>cerebras/zai-glm-4.7</code> <code>opencodex/kimi-k2p7-code</code> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
@@ -352,12 +352,12 @@ Worktrees は、Git worktree を `.slim/worktrees/<slug>/` 配下の安全で隔
   </tr>
   <tr>
     <td colspan="2">
-      <b>Default Model:</b> <code>openai/gpt-5.5 (high)</code>
+      <b>Default Model:</b> <code>opencodex/gpt-5.5 (high)</code>
     </td>
   </tr>
   <tr>
     <td colspan="2">
-      <b>Recommended Models:</b> <code>openai/gpt-5.5 (high)</code> <code>google/gemini-3.1-pro-preview (high)</code>
+      <b>Recommended Models:</b> <code>opencodex/gpt-5.5 (high)</code> <code>google/gemini-3.1-pro-preview (high)</code>
     </td>
   </tr>
   <tr>
@@ -442,12 +442,12 @@ Worktrees は、Git worktree を `.slim/worktrees/<slug>/` 配下の安全で隔
   </tr>
   <tr>
     <td colspan="2">
-      <b>Default Model:</b> <code>openai/gpt-5.4-mini</code>
+      <b>Default Model:</b> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
     <td colspan="2">
-      <b>Recommended Models:</b> <code>cerebras/zai-glm-4.7</code> <code>fireworks-ai/accounts/fireworks/routers/kimi-k2p5-turbo</code> <code>openai/gpt-5.4-mini</code>
+      <b>Recommended Models:</b> <code>cerebras/zai-glm-4.7</code> <code>opencodex/kimi-k2p7-code</code> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
@@ -483,7 +483,7 @@ Worktrees は、Git worktree を `.slim/worktrees/<slug>/` 配下の安全で隔
   </tr>
   <tr>
     <td colspan="2">
-      <b>Default Model:</b> <code>openai/gpt-5.4-mini</code>
+      <b>Default Model:</b> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
@@ -524,12 +524,12 @@ Worktrees は、Git worktree を `.slim/worktrees/<slug>/` 配下の安全で隔
   </tr>
   <tr>
     <td colspan="2">
-      <b>Default Model:</b> <code>openai/gpt-5.4-mini</code>
+      <b>Default Model:</b> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
     <td colspan="2">
-      <b>Recommended Models:</b> <code>cerebras/zai-glm-4.7</code> <code>fireworks-ai/accounts/fireworks/routers/kimi-k2p5-turbo</code> <code>openai/gpt-5.4-mini</code>
+      <b>Recommended Models:</b> <code>cerebras/zai-glm-4.7</code> <code>opencodex/kimi-k2p7-code</code> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
@@ -560,7 +560,7 @@ Worktrees は、Git worktree を `.slim/worktrees/<slug>/` 配下の安全で隔
 
 - 画像、スクリーンショット、図解 → `read` ツール（ネイティブな画像サポート）
 - PDF やバイナリドキュメント → `read` ツール（テキスト＋構造抽出）
-- **デフォルトでは無効** — `"disabled_agents": []` を設定し、ビジョン対応モデルを構成することで有効化できます。`--preset=opencode-go` でインストールすると `opencode-go/kimi-k2.6` で有効になります
+- **デフォルトでは無効** — `"disabled_agents": []` を設定し、ビジョン対応モデルを構成することで有効化できます。`--preset=opencode-go` でインストールすると `opencodex/kimi-k2p7-code` で有効になります
 
     </td>
   </tr>
@@ -571,7 +571,7 @@ Worktrees は、Git worktree を `.slim/worktrees/<slug>/` 配下の安全で隔
   </tr>
   <tr>
     <td colspan="2">
-      <b>Default Model:</b> <code>openai/gpt-5.4-mini</code> — <i>有効化するにはビジョン対応モデルを設定してください</i>
+      <b>Default Model:</b> <code>opencodex/gpt-5.4-mini</code> — <i>有効化するにはビジョン対応モデルを設定してください</i>
     </td>
   </tr>
   <tr>

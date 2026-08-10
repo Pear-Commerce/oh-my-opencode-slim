@@ -32,10 +32,10 @@ describe('PluginConfigSchema specialists validation', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
             oracle: {
-              model: 'openrouter/openai/gpt-5.6-sol',
+              model: 'opencodex/gpt-5.6-sol',
               variant: 'high',
               skills: ['simplify'],
               mcps: [],
@@ -53,9 +53,9 @@ describe('PluginConfigSchema specialists validation', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
-            council: { model: 'openrouter/openai/gpt-5.6-sol' },
+            council: { model: 'opencodex/gpt-5.6-sol' },
           },
         },
       },
@@ -69,9 +69,9 @@ describe('PluginConfigSchema specialists validation', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
-            councillor: { model: 'openrouter/openai/gpt-5.6-sol' },
+            councillor: { model: 'opencodex/gpt-5.6-sol' },
           },
         },
       },
@@ -85,9 +85,9 @@ describe('PluginConfigSchema specialists validation', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
-            orchestrator: { model: 'openrouter/openai/gpt-5.6-sol' },
+            orchestrator: { model: 'opencodex/gpt-5.6-sol' },
           },
         },
       },
@@ -101,9 +101,9 @@ describe('PluginConfigSchema specialists validation', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
-            bogus: { model: 'openrouter/openai/gpt-5.6-sol' },
+            bogus: { model: 'opencodex/gpt-5.6-sol' },
           },
         },
       },
@@ -116,9 +116,9 @@ describe('PluginConfigSchema specialists validation', () => {
     const result = PluginConfigSchema.safeParse({
       agents: {
         oracle: {
-          model: 'openai/gpt-5.5',
+          model: 'opencodex/gpt-5.5',
           specialists: {
-            oracle: { model: 'openrouter/openai/gpt-5.6-sol' },
+            oracle: { model: 'opencodex/gpt-5.6-sol' },
           },
         },
       },
@@ -131,9 +131,9 @@ describe('PluginConfigSchema specialists validation', () => {
     const result = PluginConfigSchema.safeParse({
       agents: {
         janitor: {
-          model: 'openai/gpt-5.4-mini',
+          model: 'opencodex/gpt-5.4-mini',
           specialists: {
-            oracle: { model: 'openrouter/openai/gpt-5.6-sol' },
+            oracle: { model: 'opencodex/gpt-5.6-sol' },
           },
         },
       },
@@ -147,9 +147,9 @@ describe('PluginConfigSchema specialists validation', () => {
       presets: {
         sol: {
           oracle: {
-            model: 'openai/gpt-5.5',
+            model: 'opencodex/gpt-5.5',
             specialists: {
-              oracle: { model: 'openrouter/openai/gpt-5.6-sol' },
+              oracle: { model: 'opencodex/gpt-5.6-sol' },
             },
           },
         },
@@ -165,9 +165,9 @@ describe('PluginConfigSchema specialists validation', () => {
         sol: {
           'orchestrator-glm52-sol': {
             orchestrator_class: true,
-            model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+            model: 'opencodex/glm-5p2',
             specialists: {
-              oracle: { model: 'openrouter/openai/gpt-5.6-sol' },
+              oracle: { model: 'opencodex/gpt-5.6-sol' },
             },
           },
         },
@@ -182,12 +182,12 @@ describe('PluginConfigSchema specialists validation', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
             oracle: {
-              model: 'openrouter/openai/gpt-5.6-sol',
+              model: 'opencodex/gpt-5.6-sol',
               specialists: {
-                oracle: { model: 'openrouter/openai/gpt-5.6-sol' },
+                oracle: { model: 'opencodex/gpt-5.6-sol' },
               },
             },
           },
@@ -203,10 +203,10 @@ describe('PluginConfigSchema specialists validation', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
             oracle: {
-              model: 'openrouter/openai/gpt-5.6-sol',
+              model: 'opencodex/gpt-5.6-sol',
               orchestrator_class: true,
             },
           },
@@ -222,10 +222,10 @@ describe('PluginConfigSchema specialists validation', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
             oracle: {
-              model: 'openrouter/openai/gpt-5.6-sol',
+              model: 'opencodex/gpt-5.6-sol',
               displayName: 'advisor',
             },
           },
@@ -241,10 +241,10 @@ describe('PluginConfigSchema specialists validation', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
             oracle: {
-              model: 'openrouter/openai/gpt-5.6-sol',
+              model: 'opencodex/gpt-5.6-sol',
               orchestratorPrompt: '@oracle\n- Role: x',
             },
           },
@@ -260,7 +260,7 @@ describe('PluginConfigSchema specialists validation', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {},
         },
       },
@@ -274,11 +274,11 @@ describe('PluginConfigSchema specialists validation', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
-            oracle: { model: 'openrouter/openai/gpt-5.6-sol' },
-            librarian: { model: 'openrouter/openai/gpt-5.6-sol' },
-            fixer: { model: 'openrouter/openai/gpt-5.6-sol' },
+            oracle: { model: 'opencodex/gpt-5.6-sol' },
+            librarian: { model: 'opencodex/gpt-5.6-sol' },
+            fixer: { model: 'opencodex/gpt-5.6-sol' },
           },
         },
       },
@@ -292,16 +292,16 @@ describe('AgentOverrideConfigSchema specialists field', () => {
   test('accepts specialists on a custom orchestrator_class override', () => {
     const result = AgentOverrideConfigSchema.safeParse({
       orchestrator_class: true,
-      model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+      model: 'opencodex/glm-5p2',
       specialists: {
-        oracle: { model: 'openrouter/openai/gpt-5.6-sol', variant: 'high' },
+        oracle: { model: 'opencodex/gpt-5.6-sol', variant: 'high' },
       },
     });
 
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.specialists?.oracle?.model).toBe(
-        'openrouter/openai/gpt-5.6-sol',
+        'opencodex/gpt-5.6-sol',
       );
       expect(result.data.specialists?.oracle?.variant).toBe('high');
     }
@@ -310,12 +310,12 @@ describe('AgentOverrideConfigSchema specialists field', () => {
   test('specialists value with array model parses', () => {
     const result = AgentOverrideConfigSchema.safeParse({
       orchestrator_class: true,
-      model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+      model: 'opencodex/glm-5p2',
       specialists: {
         oracle: {
           model: [
             { id: 'google/gemini-3-pro', variant: 'high' },
-            'openai/gpt-4',
+            'opencodex/gpt-5.5',
           ],
         },
       },
@@ -327,7 +327,7 @@ describe('AgentOverrideConfigSchema specialists field', () => {
   test('specialists value rejects empty model array', () => {
     const result = AgentOverrideConfigSchema.safeParse({
       orchestrator_class: true,
-      model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+      model: 'opencodex/glm-5p2',
       specialists: {
         oracle: { model: [] },
       },

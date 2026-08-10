@@ -108,21 +108,21 @@ bunx oh-my-opencode-slim@latest install
   "preset": "openai",
   "presets": {
     "openai": {
-      "orchestrator": { "model": "openai/gpt-5.5", "variant": "medium", "skills": ["*"], "mcps": ["*", "!context7"] },
-      "oracle": { "model": "openai/gpt-5.5", "variant": "high", "skills": ["simplify"], "mcps": [] },
-      "librarian": { "model": "openai/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": ["websearch", "context7", "gh_grep"] },
-      "explorer": { "model": "openai/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": [] },
-      "designer": { "model": "openai/gpt-5.4-mini", "variant": "medium", "skills": [], "mcps": [] },
-      "fixer": { "model": "openai/gpt-5.5", "variant": "low", "skills": [], "mcps": [] }
+      "orchestrator": { "model": "opencodex/gpt-5.5", "variant": "medium", "skills": ["*"], "mcps": ["*", "!context7"] },
+      "oracle": { "model": "opencodex/gpt-5.5", "variant": "high", "skills": ["simplify"], "mcps": [] },
+      "librarian": { "model": "opencodex/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": ["websearch", "context7", "gh_grep"] },
+      "explorer": { "model": "opencodex/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": [] },
+      "designer": { "model": "opencodex/gpt-5.4-mini", "variant": "medium", "skills": [], "mcps": [] },
+      "fixer": { "model": "opencodex/gpt-5.5", "variant": "low", "skills": [], "mcps": [] }
     },
     "opencode-go": {
-      "orchestrator": { "model": "opencode-go/glm-5.1", "skills": [ "*" ], "mcps": [ "*", "!context7" ] },
-      "oracle": { "model": "opencode-go/deepseek-v4-pro", "variant": "max", "skills": ["simplify"], "mcps": [] },
-      "council": { "model": "opencode-go/deepseek-v4-pro", "variant": "high", "skills": [], "mcps": [] },
-      "librarian": { "model": "opencode-go/minimax-m2.7", "skills": [], "mcps": [ "websearch", "context7", "gh_grep" ] },
-      "explorer": { "model": "opencode-go/minimax-m2.7", "skills": [], "mcps": [] },
-      "designer": { "model": "opencode-go/kimi-k2.6", "variant": "medium", "skills": [], "mcps": [] },
-      "fixer": { "model": "opencode-go/deepseek-v4-flash", "variant": "high", "skills": [], "mcps": [] }
+      "orchestrator": { "model": "opencodex/glm-5p2", "skills": [ "*" ], "mcps": [ "*", "!context7" ] },
+      "oracle": { "model": "opencodex/deepseek-v4-flash-0731", "variant": "max", "skills": ["simplify"], "mcps": [] },
+      "council": { "model": "opencodex/deepseek-v4-flash-0731", "variant": "high", "skills": [], "mcps": [] },
+      "librarian": { "model": "opencodex/glm-5p2", "skills": [], "mcps": [ "websearch", "context7", "gh_grep" ] },
+      "explorer": { "model": "opencodex/glm-5p2", "skills": [], "mcps": [] },
+      "designer": { "model": "opencodex/kimi-k2p7-code", "variant": "medium", "skills": [], "mcps": [] },
+      "fixer": { "model": "opencodex/deepseek-v4-flash-0731", "variant": "high", "skills": [], "mcps": [] }
     }
   }
 }
@@ -268,12 +268,12 @@ Worktrees는 Git worktree를 `.slim/worktrees/<slug>/` 아래의 안전하고 �
   </tr>
   <tr>
     <td colspan="2">
-      <b>기본 모델:</b> <code>openai/gpt-5.5</code>
+      <b>기본 모델:</b> <code>opencodex/gpt-5.5</code>
     </td>
   </tr>
   <tr>
     <td colspan="2">
-      <b>추천 모델:</b> <code>openai/gpt-5.5</code> <code>anthropic/claude-opus-4.6</code>
+      <b>추천 모델:</b> <code>opencodex/gpt-5.5</code> <code>anthropic/claude-opus-4.6</code>
     </td>
   </tr>
   <tr>
@@ -309,12 +309,12 @@ Worktrees는 Git worktree를 `.slim/worktrees/<slug>/` 아래의 안전하고 �
   </tr>
   <tr>
     <td colspan="2">
-      <b>기본 모델:</b> <code>openai/gpt-5.4-mini</code>
+      <b>기본 모델:</b> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
     <td colspan="2">
-      <b>추천 모델:</b> <code>cerebras/zai-glm-4.7</code> <code>fireworks-ai/accounts/fireworks/routers/kimi-k2p5-turbo</code> <code>openai/gpt-5.4-mini</code>
+      <b>추천 모델:</b> <code>cerebras/zai-glm-4.7</code> <code>opencodex/kimi-k2p7-code</code> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
@@ -350,12 +350,12 @@ Worktrees는 Git worktree를 `.slim/worktrees/<slug>/` 아래의 안전하고 �
   </tr>
   <tr>
     <td colspan="2">
-      <b>기본 모델:</b> <code>openai/gpt-5.5 (high)</code>
+      <b>기본 모델:</b> <code>opencodex/gpt-5.5 (high)</code>
     </td>
   </tr>
   <tr>
     <td colspan="2">
-      <b>추천 모델:</b> <code>openai/gpt-5.5 (high)</code> <code>google/gemini-3.1-pro-preview (high)</code>
+      <b>추천 모델:</b> <code>opencodex/gpt-5.5 (high)</code> <code>google/gemini-3.1-pro-preview (high)</code>
     </td>
   </tr>
   <tr>
@@ -440,12 +440,12 @@ Worktrees는 Git worktree를 `.slim/worktrees/<slug>/` 아래의 안전하고 �
   </tr>
   <tr>
     <td colspan="2">
-      <b>기본 모델:</b> <code>openai/gpt-5.4-mini</code>
+      <b>기본 모델:</b> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
     <td colspan="2">
-      <b>추천 모델:</b> <code>cerebras/zai-glm-4.7</code> <code>fireworks-ai/accounts/fireworks/routers/kimi-k2p5-turbo</code> <code>openai/gpt-5.4-mini</code>
+      <b>추천 모델:</b> <code>cerebras/zai-glm-4.7</code> <code>opencodex/kimi-k2p7-code</code> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
@@ -481,7 +481,7 @@ Worktrees는 Git worktree를 `.slim/worktrees/<slug>/` 아래의 안전하고 �
   </tr>
   <tr>
     <td colspan="2">
-      <b>기본 모델:</b> <code>openai/gpt-5.4-mini</code>
+      <b>기본 모델:</b> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
@@ -522,12 +522,12 @@ Worktrees는 Git worktree를 `.slim/worktrees/<slug>/` 아래의 안전하고 �
   </tr>
   <tr>
     <td colspan="2">
-      <b>기본 모델:</b> <code>openai/gpt-5.4-mini</code>
+      <b>기본 모델:</b> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
     <td colspan="2">
-      <b>추천 모델:</b> <code>cerebras/zai-glm-4.7</code> <code>fireworks-ai/accounts/fireworks/routers/kimi-k2p5-turbo</code> <code>openai/gpt-5.4-mini</code>
+      <b>추천 모델:</b> <code>cerebras/zai-glm-4.7</code> <code>opencodex/kimi-k2p7-code</code> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
@@ -558,7 +558,7 @@ Worktrees는 Git worktree를 `.slim/worktrees/<slug>/` 아래의 안전하고 �
 
 - 이미지, 스크린샷, 다이어그램 -> `read` 도구 (네이티브 이미지 지원)
 - PDF 및 바이너리 문서 -> `read` 도구 (텍스트 + 구조 추출)
-- **기본 비활성화** — `"disabled_agents": []`로 설정하고 비전 지원 모델을 구성하여 활성화; `--preset=opencode-go`로 설치하면 `opencode-go/kimi-k2.6`으로 자동 활성화됩니다
+- **기본 비활성화** — `"disabled_agents": []`로 설정하고 비전 지원 모델을 구성하여 활성화; `--preset=opencode-go`로 설치하면 `opencodex/kimi-k2p7-code`으로 자동 활성화됩니다
 
     </td>
   </tr>
@@ -569,7 +569,7 @@ Worktrees는 Git worktree를 `.slim/worktrees/<slug>/` 아래의 안전하고 �
   </tr>
   <tr>
     <td colspan="2">
-      <b>기본 모델:</b> <code>openai/gpt-5.4-mini</code> — <i>비전 지원 모델을 구성하여 활성화</i>
+      <b>기본 모델:</b> <code>opencodex/gpt-5.4-mini</code> — <i>비전 지원 모델을 구성하여 활성화</i>
     </td>
   </tr>
   <tr>

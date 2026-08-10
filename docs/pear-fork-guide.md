@@ -66,9 +66,9 @@ one you run and tailors the next-steps accordingly.
 
 - **OpenCode** — either the [Desktop app](https://opencode.ai) or the `opencode` CLI. The installer does not require the CLI.
 - **[Bun](https://bun.sh)** — required to build the plugin (`curl -fsSL https://bun.sh/install | bash`).
-- **Provider credentials** — Pear uses two providers:
-  - **OpenRouter** — Anthropic, OpenAI, Google models (Claude Opus/Sonnet, GPT-5.5, Gemini). OAuth.
-  - **Fireworks AI** — GLM 5.2, DeepSeek, Kimi, Qwen. API key (`FIREWORKS_API_KEY`) or OAuth.
+- **OpenCodex proxy** — OpenCode talks only to the local `opencodex`
+  provider. Native OpenAI and Fireworks credentials live in OpenCodex, not in
+  OpenCode.
 
 ### Install
 
@@ -101,17 +101,16 @@ Other forms:
 **If you run OpenCode Desktop** (the installer detects this automatically):
 
 1. **Quit Desktop completely (Cmd-Q) and reopen it** — config is loaded once at startup.
-2. Sign in to OpenRouter and Fireworks AI via Desktop's in-app auth (Settings / account), or `export FIREWORKS_API_KEY` in your shell profile.
-3. Confirm `fireworks-ai/accounts/fireworks/models/glm-5p2` is visible in the Desktop model picker (refresh if not).
+2. Confirm OpenCodex is running at `http://127.0.0.1:10100/`.
+3. Confirm `opencodex/glm-5p2` is visible in the Desktop model picker (refresh if not).
 
 **If you run the opencode CLI:**
 
 ```bash
-opencode auth login
 opencode models --refresh
 ```
 
-Confirm `fireworks-ai/accounts/fireworks/models/glm-5p2` appears, then restart `opencode`.
+Confirm `opencodex/glm-5p2` appears, then restart `opencode`.
 
 ### Verify
 
@@ -145,10 +144,10 @@ cp pear-config/oh-my-opencode-slim.json ~/.config/opencode/
 cp pear-config/tui.json ~/.config/opencode/
 ```
 
-> The `provider.fireworks-ai.models` entry for `glm-5p2` in `opencode.jsonc`
-> is **required** — it tells OpenCode the GLM 5.2 model exists on Fireworks
-> with a 1M context window. Without it, model resolution fails for any agent
-> or preset that references `fireworks-ai/accounts/fireworks/models/glm-5p2`.
+> The `provider.opencodex.models` entry for `glm-5p2` in `opencode.jsonc`
+> is **required** — it tells OpenCode the GLM 5.2 model exists through
+> OpenCodex with a 1M context window. Without it, model resolution fails for any agent
+> or preset that references `opencodex/glm-5p2`.
 > The installer handles this for you; only worry about it if you install
 > manually or hand-edit the config.
 
@@ -227,25 +226,25 @@ specialist routing and differ only in the **orchestrator model/variant**:
 
 | Preset | Orchestrator model | Variant |
 |---|---|---|
-| `orchestrator-glm52` *(active)* | `fireworks-ai/accounts/fireworks/models/glm-5p2` | — |
-| `orchestrator-gpt55-medium` | `openrouter/openai/gpt-5.5` | medium |
-| `orchestrator-gpt55-high` | `openrouter/openai/gpt-5.5` | high |
-| `orchestrator-gpt55-xhigh` | `openrouter/openai/gpt-5.5` | xhigh |
-| `fireworks-openrouter` | `openrouter/openai/gpt-5.5` | medium |
+| `orchestrator-glm52` *(active)* | `opencodex/glm-5p2` | — |
+| `orchestrator-gpt55-medium` | `opencodex/gpt-5.5` | medium |
+| `orchestrator-gpt55-high` | `opencodex/gpt-5.5` | high |
+| `orchestrator-gpt55-xhigh` | `opencodex/gpt-5.5` | xhigh |
+| `opencodex-mixed` | `opencodex/gpt-5.5` | medium |
 
 Every preset uses the same specialist layout:
 
-- **oracle** → `openrouter/anthropic/claude-opus-4.8` (variant `xhigh`),
+- **oracle** → `opencodex/gpt-5.6-sol` (variant `xhigh`),
   skills `["simplify"]`
-- **council** → `openrouter/anthropic/claude-sonnet-4.6` (variant `high`)
-- **librarian** → `fireworks-ai/.../glm-5p2`, MCPs `websearch`, `context7`,
+- **council** → `opencodex/gpt-5.5` (variant `high`)
+- **librarian** → `opencodex/glm-5p2`, MCPs `websearch`, `context7`,
   `gh_grep`
-- **explorer** → `fireworks-ai/.../glm-5p2`
-- **designer** → `openrouter/anthropic/claude-sonnet-4.6` (variant `high`)
-- **fixer** → `fireworks-ai/.../deepseek-v4-flash`
+- **explorer** → `opencodex/glm-5p2`
+- **designer** → `opencodex/gpt-5.5` (variant `high`)
+- **fixer** → `opencodex/deepseek-v4-flash-0731`
 
 The pattern: **cheap/fast GLM 5.2 for scouting, DeepSeek V4 Flash for mechanical
-work**, **Sonnet 4.6 for design and council**, **Opus 4.8 for
+work**, **GPT-5.5 for design and council**, **GPT-5.6 Sol for
 architecture/review**, and the **orchestrator model is the dial you turn** (GLM
 for cost, GPT-5.5 at medium/high/xhigh for harder coordination).
 
@@ -253,7 +252,7 @@ for cost, GPT-5.5 at medium/high/xhigh for harder coordination).
 
 `variant` is a free-form reasoning-effort string passed through to the
 provider. Common values: `low`, `medium`, `high`, `xhigh`, `max`. Not every
-provider honors every value; OpenRouter maps them per model.
+provider honors every value; OpenCodex forwards the supported effort setting.
 
 ### Tuning a preset
 
@@ -265,11 +264,11 @@ Edit `~/.config/opencode/oh-my-opencode-slim.json`:
   "presets": {
     "orchestrator-glm52": {
       "orchestrator": {
-        "model": "fireworks-ai/accounts/fireworks/models/glm-5p2",
+        "model": "opencodex/glm-5p2",
         "skills": ["*"],
         "mcps": ["*", "!context7"]
       },
-      "oracle": { "model": "openrouter/anthropic/claude-opus-4.8", "variant": "xhigh", "skills": ["simplify"], "mcps": [] }
+      "oracle": { "model": "opencodex/gpt-5.6-sol", "variant": "xhigh", "skills": ["simplify"], "mcps": [] }
       // ...librarian, explorer, designer, fixer, council
     }
   }
@@ -337,7 +336,7 @@ orchestrator_class: z.boolean().optional().describe(
   "agents": {
     "orchestrator-deepseek-high": {
       "orchestrator_class": true,
-      "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-pro",
+      "model": "opencodex/deepseek-v4-flash-0731",
       "variant": "high",
       "skills": ["*"],
       "mcps": ["*", "!context7"]
@@ -350,11 +349,11 @@ orchestrator_class: z.boolean().optional().describe(
 
 | Agent | Model | Variant |
 |---|---|---|
-| `orchestrator-gpt55-medium` | `openrouter/openai/gpt-5.5` | medium |
-| `orchestrator-gpt55-high` | `openrouter/openai/gpt-5.5` | high |
-| `orchestrator-gpt55-xhigh` | `openrouter/openai/gpt-5.5` | xhigh |
-| `orchestrator-deepseek-high` | `fireworks-ai/.../deepseek-v4-pro` | high |
-| `orchestrator-glm52` | `fireworks-ai/.../glm-5p2` | — |
+| `orchestrator-gpt55-medium` | `opencodex/gpt-5.5` | medium |
+| `orchestrator-gpt55-high` | `opencodex/gpt-5.5` | high |
+| `orchestrator-gpt55-xhigh` | `opencodex/gpt-5.5` | xhigh |
+| `orchestrator-deepseek-high` | `opencodex/deepseek-v4-flash-0731` | high |
+| `orchestrator-glm52` | `opencodex/glm-5p2` | — |
 
 Switch between them in the agent picker to change which orchestrator model
 runs the session without touching presets.
@@ -445,7 +444,7 @@ tokens — expensive and wasteful for a one-word "are you done?" turn.
 **What the fork adds:** a hardcoded constant:
 
 ```ts
-const WAKEUP_MODEL = 'fireworks-ai/accounts/fireworks/models/glm-5p2';
+const WAKEUP_MODEL = 'opencodex/glm-5p2';
 ```
 
 All wakeup prompts are forced to GLM 5.2 (cheap, 1M context) regardless of
@@ -456,7 +455,7 @@ the session's first message with an `agent` field.
 
 **To change the wakeup model:** edit `WAKEUP_MODEL` in `src/index.ts` and
 `bun run build`. This is why the `glm-5p2` model definition in
-`opencode.jsonc` (under `provider.fireworks-ai.models`) is required even if
+`opencode.jsonc` (under `provider.opencodex.models`) is required even if
 your active preset doesn't use GLM as the orchestrator.
 
 ### 4. Fixer-review hook
@@ -493,9 +492,9 @@ configures it in `oh-my-opencode-slim.json`:
     "timeout": 1800000,
     "presets": {
       "default": {
-        "architect":     { "model": "openrouter/anthropic/claude-opus-4.8", "variant": "xhigh", "prompt": "Focus on architecture, maintainability, data integrity, and long-term risk." },
-        "implementer":   { "model": "openrouter/openai/gpt-5.5", "variant": "xhigh", "prompt": "Focus on practical implementation, correctness, and delivery trade-offs." },
-        "oss-reviewer":  { "model": "fireworks-ai/accounts/fireworks/models/deepseek-v4-pro", "variant": "high", "prompt": "Focus on independent code review, simplification, and edge cases." }
+        "architect":     { "model": "opencodex/gpt-5.6-sol", "variant": "xhigh", "prompt": "Focus on architecture, maintainability, data integrity, and long-term risk." },
+        "implementer":   { "model": "opencodex/gpt-5.5", "variant": "xhigh", "prompt": "Focus on practical implementation, correctness, and delivery trade-offs." },
+        "oss-reviewer":  { "model": "opencodex/deepseek-v4-flash-0731", "variant": "high", "prompt": "Focus on independent code review, simplification, and edge cases." }
       }
     }
   }
@@ -562,9 +561,9 @@ changelog first.
   - `OPENCODE_DISABLE_EXTERNAL_SKILLS=1` to skip external skill scans
   See the `customize-opencode` skill for the full list.
 - **`glm-5p2` model not found** — you're missing the
-  `provider.fireworks-ai.models` entry in `opencode.jsonc` (see
-  [Quick start](#quick-start-team-setup)), or your Fireworks API key isn't
-  set. Run `opencode models --refresh`.
+  `provider.opencodex.models` entry in `opencode.jsonc` (see
+  [Quick start](#quick-start-team-setup)), or the OpenCodex proxy is not
+  running. Run `opencode models --refresh`.
 - **Plugin changes not taking effect** — you edited source but didn't
   `bun run build`, or you built but didn't restart OpenCode. Both are required.
 - **Orchestrator isn't waking up in a deepwork loop** — confirm the session's

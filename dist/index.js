@@ -18477,14 +18477,14 @@ var ALL_AGENT_NAMES = ["orchestrator", ...SUBAGENT_NAMES];
 var PROTECTED_AGENTS = new Set(["orchestrator", "councillor"]);
 var DEFAULT_MODELS = {
   orchestrator: undefined,
-  oracle: "openai/gpt-5.5",
-  librarian: "openai/gpt-5.4-mini",
-  explorer: "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
-  designer: "openai/gpt-5.4-mini",
-  fixer: "fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731",
-  observer: "openai/gpt-5.4-mini",
-  council: "openai/gpt-5.4-mini",
-  councillor: "openai/gpt-5.4-mini"
+  oracle: "opencodex/gpt-5.5",
+  librarian: "opencodex/gpt-5.4-mini",
+  explorer: "opencodex/deepseek-v4-flash-0731",
+  designer: "opencodex/gpt-5.4-mini",
+  fixer: "opencodex/deepseek-v4-flash-0731",
+  observer: "opencodex/gpt-5.4-mini",
+  council: "opencodex/gpt-5.4-mini",
+  councillor: "opencodex/gpt-5.4-mini"
 };
 var POLL_INTERVAL_BACKGROUND_MS = 2000;
 var MAX_POLL_TIME_MS = 5 * 60 * 1000;
@@ -18511,9 +18511,9 @@ var COUNCILLOR_STAGGER_MS = 250;
 var DEFAULT_DISABLED_AGENTS = ["observer"];
 // src/config/council-schema.ts
 import { z } from "zod";
-var ModelIdSchema = z.string().regex(/^[^/\s]+\/[^\s]+$/, 'Expected provider/model format (e.g. "openai/gpt-5.4-mini")');
+var ModelIdSchema = z.string().regex(/^[^/\s]+\/[^\s]+$/, 'Expected provider/model format (e.g. "opencodex/gpt-5.4-mini")');
 var CouncillorConfigSchema = z.object({
-  model: ModelIdSchema.describe('Model ID in provider/model format (e.g. "openai/gpt-5.4-mini")'),
+  model: ModelIdSchema.describe('Model ID in provider/model format (e.g. "opencodex/gpt-5.4-mini")'),
   variant: z.string().optional(),
   prompt: z.string().optional().describe("Optional role/guidance injected into the councillor user prompt")
 });
@@ -24454,8 +24454,8 @@ function loadPersistedConsultation(directory, sessionID) {
   }
 }
 var EVENT_WAKEUP_MESSAGE = "Background work is ready to reconcile. Review the Background Job Board and continue: reconcile terminal results, validate, and proceed to the next phase or finish if all work is complete.";
-var DONE_CHECK_MESSAGE = "Have you completed all work in the current deepwork scope, with any remaining work explicitly deferred and documented? Respond with one word: yes or no.";
-var CONTINUE_MESSAGE = "Continue your deepwork. Pick up where you left off and proceed with the next unfinished task.";
+var DONE_CHECK_MESSAGE = "Are you at a natural stopping point — all work complete or explicitly deferred? If background work is still running, answer yes (you are correctly waiting). Respond with one word: yes or no.";
+var CONTINUE_MESSAGE = "Continue your deepwork. If you were waiting on background work, check the Background Job Board — it may have completed. Otherwise pick up the next unfinished task and proceed.";
 var GATE_FAIL_MESSAGE = "The convergence gate failed. Review the gate output above, fix the issues, and continue.";
 var COMPACT_WRITE_MESSAGE = [
   "Your context window is approaching its limit. Before automatic compaction,",
@@ -24546,11 +24546,16 @@ function createDeepworkWakeupHook(client, options) {
         lastInputTokens: 0,
         deepworkFileWritten: false,
         compactCycleSawBusy: false,
-        lastIdleAt: 0
+        lastIdleAt: 0,
+        continuationActive: false
       };
       states.set(sessionID, s);
     }
     return s;
+  }
+  function isContinuationActive(sessionID) {
+    const state = states.get(sessionID);
+    return hasHadBackgroundWork.has(sessionID) || Boolean(state?.continuationActive) || Boolean(state?.gate);
   }
   function boardSignature(sessionID) {
     return backgroundJobBoard.list(sessionID).map((j) => `${j.taskID}:${j.state}:${j.terminalUnreconciled}`).join("|");
@@ -24611,6 +24616,8 @@ function createDeepworkWakeupHook(client, options) {
         if (idleAgeMs < STALE_IDLE_THRESHOLD_MS)
           return;
         const hasRunning = backgroundJobBoard.hasRunning(sessionID);
+        if (hasRunning)
+          return;
         const hasUnreconciled = backgroundJobBoard.hasTerminalUnreconciled(sessionID);
         const hasPendingTask = hasPendingTaskCall?.(sessionID) ?? false;
         log("[deepwork-wakeup] stale-idle safety net firing done-check from periodic timer", {
@@ -24804,6 +24811,8 @@ function createDeepworkWakeupHook(client, options) {
           sessionID
         });
         clearTimer(sessionID);
+        state.gate = undefined;
+        state.continuationActive = false;
         persistGate(directory, sessionID, undefined);
         return;
       }
@@ -25136,6 +25145,8 @@ Gate passed, but unreconciled background work remains. Reconcile the pending wor
       clearTimer(sessionID);
       state.awaitingDoneCheck = false;
       state.gateCheckPromptSent = false;
+      state.gate = undefined;
+      state.continuationActive = false;
       persistGate(directory, sessionID, undefined);
       return;
     }
@@ -25290,6 +25301,7 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
       });
       clearTimer(sessionID);
       state.awaitingDoneCheck = false;
+      state.continuationActive = false;
       return;
     }
     const sig = boardSignature(sessionID);
@@ -25409,7 +25421,7 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
         const state = getState(sessionId);
         state.idle = true;
         state.lastIdleAt = Date.now();
-        if (state.compactCycle === "normal" && (hasHadBackgroundWork.has(sessionId) || state.gate) && !backgroundJobBoard.hasRunning(sessionId) && !backgroundJobBoard.hasTerminalUnreconciled(sessionId) && !state.awaitingDoneCheck && !state.wakeInFlight) {
+        if (state.compactCycle === "normal" && isContinuationActive(sessionId) && !backgroundJobBoard.hasRunning(sessionId) && !backgroundJobBoard.hasTerminalUnreconciled(sessionId) && !state.awaitingDoneCheck && !state.wakeInFlight) {
           await checkContextThresholdOnIdle(sessionId);
         }
         if (state.compactCycle === "pendingWrite") {
@@ -25492,18 +25504,18 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
           hasHadBackgroundWork.add(sessionId);
           sentEventWake = await sendPrompt(sessionId, EVENT_WAKEUP_MESSAGE, "orchestrator-idle-with-unreconciled");
         }
-        if (hasHadBackgroundWork.has(sessionId) || state.gate) {
+        if (isContinuationActive(sessionId)) {
           startTimer(sessionId);
         }
         const hasRunning = backgroundJobBoard.hasRunning(sessionId);
         const hasUnreconciled = backgroundJobBoard.hasTerminalUnreconciled(sessionId);
         const hasPendingTask = hasPendingTaskCall?.(sessionId) ?? false;
-        if (!periodicDoneCheck && !state.gate && !state.awaitingDoneCheck && !state.wakeInFlight && !sentEventWake && hasHadBackgroundWork.has(sessionId) && !hasRunning && !hasUnreconciled && !hasPendingTask) {
+        if (!periodicDoneCheck && !state.gate && !state.awaitingDoneCheck && !state.wakeInFlight && !sentEventWake && isContinuationActive(sessionId) && !hasRunning && !hasUnreconciled && !hasPendingTask) {
           log("[deepwork-wakeup] firing one-shot done-check from idle handler (periodicDoneCheck disabled)", {
             sessionID: sessionId
           });
           sendDoneCheck(sessionId).catch(() => {});
-        } else if (!periodicDoneCheck && !state.gate && !state.awaitingDoneCheck && !state.wakeInFlight && !sentEventWake && hasHadBackgroundWork.has(sessionId)) {
+        } else if (!periodicDoneCheck && !state.gate && !state.awaitingDoneCheck && !state.wakeInFlight && !sentEventWake && isContinuationActive(sessionId)) {
           const idleAgeMs = Date.now() - state.lastIdleAt;
           log("[deepwork-wakeup] one-shot done-check blocked by guard", {
             sessionID: sessionId,
@@ -25513,7 +25525,7 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
             idleAgeMs
           });
           const STALE_IDLE_THRESHOLD_MS = 60000;
-          if (idleAgeMs > STALE_IDLE_THRESHOLD_MS) {
+          if (idleAgeMs > STALE_IDLE_THRESHOLD_MS && !hasRunning) {
             log("[deepwork-wakeup] stale-idle safety net firing done-check after 60s block", {
               sessionID: sessionId,
               idleAgeMs,
@@ -25571,6 +25583,9 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
     setGate(sessionID, gate) {
       const state = getState(sessionID);
       state.gate = gate;
+      if (gate) {
+        state.continuationActive = true;
+      }
       log("[deepwork-wakeup] gate set", {
         sessionID,
         gateType: gate?.type
@@ -25584,6 +25599,9 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
       const state = getState(sessionID);
       state.consultation = consultation;
       state.consultationPending = false;
+      if (consultation) {
+        state.continuationActive = true;
+      }
       log("[deepwork-wakeup] consultation set", {
         sessionID,
         intervalMinutes: consultation?.intervalMinutes
@@ -25601,6 +25619,13 @@ Review the Oracle's full feedback in the task tool output above and fix the issu
       output.context.push("The orchestrator maintains a deepwork progress file under `.slim/deepwork/`. " + "After compaction, the orchestrator will re-read this file to restore its " + "full working context. Preserve any references to deepwork file paths, " + "active phase status, file references, and key decisions in the summary. " + "The deepwork file itself is NOT part of the context — it is an external " + "file the orchestrator reads after compaction.");
       log("[deepwork-wakeup] injected deepwork context into compaction prompt", {
         sessionID: input.sessionID
+      });
+    },
+    activateSession(sessionID) {
+      const state = getState(sessionID);
+      state.continuationActive = true;
+      log("[deepwork-wakeup] session continuation activated", {
+        sessionID
       });
     },
     _states: states,
@@ -36684,7 +36709,7 @@ async function probeJSDOM() {
     return String(err);
   }
 }
-var WAKEUP_MODEL = "fireworks-ai/accounts/fireworks/models/glm-5p2";
+var WAKEUP_MODEL = "opencodex/glm-5p2";
 var OhMyOpenCodeLite = async (ctx) => {
   const sessionId = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15);
   initLogger(sessionId);
@@ -37238,6 +37263,9 @@ var OhMyOpenCodeLite = async (ctx) => {
       await interviewManager.handleCommandExecuteBefore(input, output);
       await presetManager.handleCommandExecuteBefore(input, output);
       await deepworkCommandHook.handleCommandExecuteBefore(input, output);
+      if (input.command === "deepwork" && typeof input.sessionID === "string" && input.sessionID.trim() !== "" && typeof input.arguments === "string" && input.arguments.trim() !== "") {
+        deepworkWakeupHook.activateSession(input.sessionID);
+      }
       await reflectCommandHook.handleCommandExecuteBefore(input, output);
     },
     "chat.headers": chatHeadersHook["chat.headers"],

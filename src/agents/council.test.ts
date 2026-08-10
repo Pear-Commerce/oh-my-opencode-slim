@@ -15,7 +15,7 @@ describe('formatCouncillorResults', () => {
       },
       {
         name: 'beta',
-        model: 'openai/gpt-5.5',
+        model: 'opencodex/gpt-5.5',
         status: 'completed',
         result:
           'Consider Fastify for better performance and built-in type validation.',
@@ -57,7 +57,7 @@ describe('formatCouncillorResults', () => {
       },
       {
         name: 'beta',
-        model: 'openai/gpt-5.5',
+        model: 'opencodex/gpt-5.5',
         status: 'timed_out',
         error: 'Request timed out after 180000ms',
       },
@@ -100,7 +100,7 @@ describe('formatCouncillorResults', () => {
       },
       {
         name: 'beta',
-        model: 'openai/gpt-5.5',
+        model: 'opencodex/gpt-5.5',
         status: 'error',
         error: 'Provider error',
       },
@@ -131,7 +131,7 @@ describe('formatCouncillorResults', () => {
       },
       {
         name: 'beta',
-        model: 'openai/gpt-5.5',
+        model: 'opencodex/gpt-5.5',
         status: 'completed',
         result: 'Another valid response',
       },

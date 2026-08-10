@@ -8,7 +8,7 @@ import type { ModelEntry } from '../config/schema';
  * The resolver always picks the first model in the effective array,
  * regardless of provider configuration. This is correct because:
  * - Not all providers require entries in opencodeConfig.provider — some are
- *   loaded automatically by opencode (e.g. github-copilot, openrouter).
+ *   loaded automatically by opencode or runtime layers (e.g. github-copilot).
  * - We cannot distinguish "auto-loaded provider" from "provider not configured"
  *   without calling the API, which isn't available at config-hook time.
  * - Runtime failover (rate-limit handling) is handled separately by

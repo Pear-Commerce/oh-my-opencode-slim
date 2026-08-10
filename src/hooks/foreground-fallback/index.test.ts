@@ -50,10 +50,10 @@ function makeChains(
   return {
     orchestrator: [
       'anthropic/claude-opus-4-5',
-      'openai/gpt-4o',
+      'opencodex/gpt-5.5',
       'google/gemini-2.5-pro',
     ],
-    explorer: ['openai/gpt-4o-mini', 'anthropic/claude-haiku'],
+    explorer: ['opencodex/gpt-5.4-mini', 'anthropic/claude-haiku'],
     ...overrides,
   };
 }
@@ -170,8 +170,8 @@ describe('ForegroundFallbackManager session.error', () => {
     ];
     expect(call[0].path.id).toBe('sess-1');
     // Should have picked the next model after anthropic/claude-opus-4-5
-    expect(call[0].body.model.providerID).toBe('openai');
-    expect(call[0].body.model.modelID).toBe('gpt-4o');
+    expect(call[0].body.model.providerID).toBe('opencodex');
+    expect(call[0].body.model.modelID).toBe('gpt-5.5');
   });
 
   test('does nothing when error is not a rate limit', async () => {
@@ -263,8 +263,8 @@ describe('ForegroundFallbackManager message.updated', () => {
         body: { model: { providerID: string; modelID: string } };
       },
     ];
-    expect(call[0].body.model.providerID).toBe('openai');
-    expect(call[0].body.model.modelID).toBe('gpt-4o');
+    expect(call[0].body.model.providerID).toBe('opencodex');
+    expect(call[0].body.model.modelID).toBe('gpt-5.5');
   });
 
   test('uses agent name from message.updated to select correct chain', async () => {
@@ -291,10 +291,11 @@ describe('ForegroundFallbackManager message.updated', () => {
         body: { model: { providerID: string; modelID: string } };
       },
     ];
-    // explorer chain: ['openai/gpt-4o-mini', 'anthropic/claude-haiku']
-    // current=gpt-4o-mini is tried → next = claude-haiku
-    expect(call[0].body.model.providerID).toBe('anthropic');
-    expect(call[0].body.model.modelID).toBe('claude-haiku');
+    // explorer chain: ['opencodex/gpt-5.4-mini', 'anthropic/claude-haiku']
+    // current=openai/gpt-4o-mini is outside the configured proxy chain, so the
+    // first untried OpenCodex model is selected.
+    expect(call[0].body.model.providerID).toBe('opencodex');
+    expect(call[0].body.model.modelID).toBe('gpt-5.4-mini');
   });
 });
 
@@ -530,10 +531,10 @@ describe('ForegroundFallbackManager subagent.session.created', () => {
         body: { model: { providerID: string; modelID: string } };
       },
     ];
-    // explorer chain: ['openai/gpt-4o-mini', 'anthropic/claude-haiku']
-    // no current model tracked → first untried = openai/gpt-4o-mini
-    expect(call[0].body.model.providerID).toBe('openai');
-    expect(call[0].body.model.modelID).toBe('gpt-4o-mini');
+    // explorer chain: ['opencodex/gpt-5.4-mini', 'anthropic/claude-haiku']
+    // no current model tracked → first untried = opencodex/gpt-5.4-mini
+    expect(call[0].body.model.providerID).toBe('opencodex');
+    expect(call[0].body.model.modelID).toBe('gpt-5.4-mini');
   });
 });
 
@@ -581,7 +582,7 @@ describe('ForegroundFallbackManager session.deleted', () => {
     const call = mocks.promptAsync.mock.calls[0] as [
       { body: { model: { providerID: string; modelID: string } } },
     ];
-    // orchestrator chain: ['anthropic/claude-opus-4-5', 'openai/gpt-4o', 'google/gemini-2.5-pro']
+    // orchestrator chain: ['anthropic/claude-opus-4-5', 'opencodex/gpt-5.5', 'google/gemini-2.5-pro']
     // no current model → first untried = anthropic/claude-opus-4-5
     expect(call[0].body.model.providerID).toBe('anthropic');
     expect(call[0].body.model.modelID).toBe('claude-opus-4-5');
@@ -649,7 +650,7 @@ describe('ForegroundFallbackManager resolveChain cross-agent isolation', () => {
       client,
       {
         // oracle intentionally absent — no chain configured
-        orchestrator: ['openai/gpt-4o', 'google/gemini-2.5-pro'],
+        orchestrator: ['opencodex/gpt-5.5', 'google/gemini-2.5-pro'],
       },
       true,
     );
@@ -677,7 +678,7 @@ describe('ForegroundFallbackManager resolveChain cross-agent isolation', () => {
     const { client, mocks } = createMockClient();
     const mgr = new ForegroundFallbackManager(
       client,
-      { orchestrator: ['openai/gpt-4o'] },
+      { orchestrator: ['opencodex/gpt-5.5'] },
       true,
     );
 
@@ -695,7 +696,7 @@ describe('ForegroundFallbackManager resolveChain cross-agent isolation', () => {
     const call = mocks.promptAsync.mock.calls[0] as [
       { body: { model: { providerID: string; modelID: string } } },
     ];
-    expect(call[0].body.model.providerID).toBe('openai');
-    expect(call[0].body.model.modelID).toBe('gpt-4o');
+    expect(call[0].body.model.providerID).toBe('opencodex');
+    expect(call[0].body.model.modelID).toBe('gpt-5.5');
   });
 });

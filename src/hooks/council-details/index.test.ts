@@ -109,13 +109,13 @@ describe('createCouncilDetailsHook', () => {
       const results: CouncillorResult[] = [
         {
           name: 'alpha',
-          model: 'openai/gpt-5.4-mini',
+          model: 'opencodex/gpt-5.4-mini',
           status: 'completed',
           result: 'Alpha says: use option A.',
         },
         {
           name: 'beta',
-          model: 'openai/gpt-5.3-codex',
+          model: 'opencodex/gpt-5.3-codex-spark',
           status: 'completed',
           result: 'Beta says: use option B.',
         },
@@ -145,7 +145,7 @@ describe('createCouncilDetailsHook', () => {
       expect(output.output).toContain('## Councillor Details (verbatim)');
       expect(output.output).toContain('### alpha (gpt-5.4-mini)');
       expect(output.output).toContain('Alpha says: use option A.');
-      expect(output.output).toContain('### beta (gpt-5.3-codex)');
+      expect(output.output).toContain('### beta (gpt-5.3-codex-spark)');
       expect(output.output).toContain('Beta says: use option B.');
       expect(manager.clearStash).toHaveBeenCalledWith('council-agent-1');
     });
@@ -154,13 +154,13 @@ describe('createCouncilDetailsHook', () => {
       const results: CouncillorResult[] = [
         {
           name: 'alpha',
-          model: 'openai/gpt-5.4-mini',
+          model: 'opencodex/gpt-5.4-mini',
           status: 'completed',
           result: 'Alpha full response.',
         },
         {
           name: 'beta',
-          model: 'openai/gpt-5.3-codex',
+          model: 'opencodex/gpt-5.3-codex-spark',
           status: 'completed',
           result: 'Beta full response.',
         },
@@ -196,13 +196,13 @@ describe('createCouncilDetailsHook', () => {
       const results: CouncillorResult[] = [
         {
           name: 'alpha',
-          model: 'openai/gpt-5.4-mini',
+          model: 'opencodex/gpt-5.4-mini',
           status: 'completed',
           result: 'Alpha full response.',
         },
         {
           name: 'beta',
-          model: 'openai/gpt-5.3-codex',
+          model: 'opencodex/gpt-5.3-codex-spark',
           status: 'completed',
           result: 'Beta full response.',
         },
@@ -221,7 +221,7 @@ describe('createCouncilDetailsHook', () => {
       );
 
       const originalOutput =
-        '## Council Response\n\nSynthesis.\n\n## Councillor Details\n\n### alpha (gpt-5.4-mini)\nAlpha full response.\n\n### beta (gpt-5.3-codex)\nBeta full response.\n\n## Council Summary\n\nDone.';
+        '## Council Response\n\nSynthesis.\n\n## Councillor Details\n\n### alpha (gpt-5.4-mini)\nAlpha full response.\n\n### beta (gpt-5.3-codex-spark)\nBeta full response.\n\n## Council Summary\n\nDone.';
       const output = { output: originalOutput };
       await hook['tool.execute.after'](
         { tool: 'task', sessionID: 'orch-1', callID: 'call-1' },
@@ -238,7 +238,7 @@ describe('createCouncilDetailsHook', () => {
         'council-agent-1': [
           {
             name: 'alpha',
-            model: 'openai/gpt-5.4-mini',
+            model: 'opencodex/gpt-5.4-mini',
             status: 'completed',
             result: 'Alpha response.',
           },
@@ -270,7 +270,7 @@ describe('createCouncilDetailsHook', () => {
         'council-agent-1': [
           {
             name: 'alpha',
-            model: 'openai/gpt-5.4-mini',
+            model: 'opencodex/gpt-5.4-mini',
             status: 'completed',
             result: 'Alpha response.',
           },
@@ -296,7 +296,7 @@ describe('createCouncilDetailsHook', () => {
         'council-agent-1': [
           {
             name: 'alpha',
-            model: 'openai/gpt-5.4-mini',
+            model: 'opencodex/gpt-5.4-mini',
             status: 'completed',
             result: 'Alpha response.',
           },
@@ -325,13 +325,13 @@ describe('createCouncilDetailsHook', () => {
       const results: CouncillorResult[] = [
         {
           name: 'alpha',
-          model: 'openai/gpt-5.4-mini',
+          model: 'opencodex/gpt-5.4-mini',
           status: 'completed',
           result: 'Alpha response.',
         },
         {
           name: 'beta',
-          model: 'openai/gpt-5.3-codex',
+          model: 'opencodex/gpt-5.3-codex-spark',
           status: 'timed_out',
           error: 'Timed out after 180000ms',
         },
@@ -355,7 +355,7 @@ describe('createCouncilDetailsHook', () => {
         output,
       );
 
-      expect(output.output).toContain('### beta (gpt-5.3-codex)');
+      expect(output.output).toContain('### beta (gpt-5.3-codex-spark)');
       expect(output.output).toContain(
         '**timed_out** — Timed out after 180000ms',
       );
@@ -365,7 +365,7 @@ describe('createCouncilDetailsHook', () => {
       const results: CouncillorResult[] = [
         {
           name: 'alpha',
-          model: 'openai/gpt-5.4-mini',
+          model: 'opencodex/gpt-5.4-mini',
           status: 'completed',
           result: 'Alpha response.',
         },

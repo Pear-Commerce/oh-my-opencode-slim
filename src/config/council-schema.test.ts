@@ -9,7 +9,7 @@ import {
 describe('CouncillorConfigSchema', () => {
   test('validates config with model and optional variant', () => {
     const goodConfig: CouncillorConfig = {
-      model: 'openai/gpt-5.4-mini',
+      model: 'opencodex/gpt-5.4-mini',
       variant: 'low',
     };
 
@@ -24,10 +24,10 @@ describe('CouncillorConfigSchema', () => {
     const config = {
       master: { model: 'anthropic/claude-opus-4-6' },
       master_timeout: 300000,
-      master_fallback: ['openai/gpt-5.5'],
+      master_fallback: ['opencodex/gpt-5.5'],
       presets: {
         default: {
-          alpha: { model: 'openai/gpt-5.4-mini' },
+          alpha: { model: 'opencodex/gpt-5.4-mini' },
         },
       },
     };
@@ -50,7 +50,7 @@ describe('CouncillorConfigSchema', () => {
     const config = {
       presets: {
         default: {
-          alpha: { model: 'openai/gpt-5.4-mini' },
+          alpha: { model: 'opencodex/gpt-5.4-mini' },
         },
       },
     };
@@ -88,8 +88,8 @@ test('unwraps legacy nested "councillors" key in preset', () => {
     presets: {
       default: {
         councillors: {
-          alpha: { model: 'openai/gpt-5.4-mini' },
-          beta: { model: 'openai/gpt-5.3-codex' },
+          alpha: { model: 'opencodex/gpt-5.4-mini' },
+          beta: { model: 'opencodex/gpt-5.3-codex-spark' },
         },
       },
     },
@@ -101,8 +101,8 @@ test('unwraps legacy nested "councillors" key in preset', () => {
   if (result.success) {
     const preset = result.data.presets.default;
     expect(Object.keys(preset)).toEqual(['alpha', 'beta']);
-    expect(preset.alpha.model).toBe('openai/gpt-5.4-mini');
-    expect(preset.beta.model).toBe('openai/gpt-5.3-codex');
+    expect(preset.alpha.model).toBe('opencodex/gpt-5.4-mini');
+    expect(preset.beta.model).toBe('opencodex/gpt-5.3-codex-spark');
   }
 });
 
@@ -111,7 +111,7 @@ test('mixed legacy "councillors" and flat keys in same preset', () => {
     presets: {
       mixed: {
         councillors: {
-          alpha: { model: 'openai/gpt-5.4-mini' },
+          alpha: { model: 'opencodex/gpt-5.4-mini' },
         },
         beta: { model: 'google/gemini-3-pro' },
       },
@@ -134,7 +134,7 @@ test('deprecated master with non-standard model ID still parses', () => {
     master_fallback: 'all', // not an array
     presets: {
       default: {
-        alpha: { model: 'openai/gpt-5.4-mini' },
+        alpha: { model: 'opencodex/gpt-5.4-mini' },
       },
     },
   };
@@ -154,7 +154,7 @@ test('legacyMasterModel undefined when master.model is not a string', () => {
     master: { model: 42 }, // not a string
     presets: {
       default: {
-        alpha: { model: 'openai/gpt-5.4-mini' },
+        alpha: { model: 'opencodex/gpt-5.4-mini' },
       },
     },
   };
@@ -172,7 +172,7 @@ test('legacyMasterModel undefined when master is not an object', () => {
     master: 'oops', // not an object
     presets: {
       default: {
-        alpha: { model: 'openai/gpt-5.4-mini' },
+        alpha: { model: 'opencodex/gpt-5.4-mini' },
       },
     },
   };
@@ -196,7 +196,7 @@ test('rejects empty model string', () => {
 
 test('accepts optional prompt field', () => {
   const config: CouncillorConfig = {
-    model: 'openai/gpt-5.4-mini',
+    model: 'opencodex/gpt-5.4-mini',
     prompt: 'Focus on security implications and edge cases.',
   };
 
@@ -211,7 +211,7 @@ test('accepts optional prompt field', () => {
 
 test('prompt is optional and defaults to undefined', () => {
   const config: CouncillorConfig = {
-    model: 'openai/gpt-5.4-mini',
+    model: 'opencodex/gpt-5.4-mini',
   };
 
   const result = CouncillorConfigSchema.safeParse(config);
@@ -225,10 +225,10 @@ describe('CouncilPresetSchema', () => {
   test('validates a named preset with multiple councillors', () => {
     const raw = {
       alpha: {
-        model: 'openai/gpt-5.4-mini',
+        model: 'opencodex/gpt-5.4-mini',
       },
       beta: {
-        model: 'openai/gpt-5.3-codex',
+        model: 'opencodex/gpt-5.3-codex-spark',
         variant: 'low',
       },
       gamma: {
@@ -246,7 +246,7 @@ describe('CouncilPresetSchema', () => {
   test('accepts preset with single councillor', () => {
     const raw = {
       solo: {
-        model: 'openai/gpt-5.4-mini',
+        model: 'opencodex/gpt-5.4-mini',
       },
     };
 
@@ -273,8 +273,8 @@ describe('CouncilConfigSchema', () => {
     const config = {
       presets: {
         default: {
-          alpha: { model: 'openai/gpt-5.4-mini' },
-          beta: { model: 'openai/gpt-5.3-codex' },
+          alpha: { model: 'opencodex/gpt-5.4-mini' },
+          beta: { model: 'opencodex/gpt-5.3-codex-spark' },
           gamma: { model: 'google/gemini-3-pro' },
         },
       },
@@ -294,7 +294,7 @@ describe('CouncilConfigSchema', () => {
     const config = {
       presets: {
         custom: {
-          alpha: { model: 'openai/gpt-5.4-mini' },
+          alpha: { model: 'opencodex/gpt-5.4-mini' },
         },
       },
       default_preset: 'custom',
@@ -320,7 +320,7 @@ describe('CouncilConfigSchema', () => {
     const badConfig = {
       presets: {
         default: {
-          alpha: { model: 'openai/gpt-5.4-mini' },
+          alpha: { model: 'opencodex/gpt-5.4-mini' },
         },
       },
       timeout: -1000,
@@ -334,7 +334,7 @@ describe('CouncilConfigSchema', () => {
     const config = {
       presets: {
         default: {
-          alpha: { model: 'openai/gpt-5.4-mini' },
+          alpha: { model: 'opencodex/gpt-5.4-mini' },
         },
       },
       timeout: 0,
@@ -363,18 +363,18 @@ describe('CouncilConfigSchema', () => {
     const config = {
       presets: {
         default: {
-          alpha: { model: 'openai/gpt-5.4-mini' },
-          beta: { model: 'openai/gpt-5.3-codex' },
+          alpha: { model: 'opencodex/gpt-5.4-mini' },
+          beta: { model: 'opencodex/gpt-5.3-codex-spark' },
         },
         fast: {
-          quick: { model: 'openai/gpt-5.4-mini', variant: 'low' },
+          quick: { model: 'opencodex/gpt-5.4-mini', variant: 'low' },
         },
         thorough: {
           detailed1: {
             model: 'anthropic/claude-opus-4-6',
             prompt: 'Provide detailed analysis with citations.',
           },
-          detailed2: { model: 'openai/gpt-5.5' },
+          detailed2: { model: 'opencodex/gpt-5.5' },
         },
       },
     };

@@ -1128,7 +1128,7 @@ describe('deepwork-wakeup hook', () => {
     hook.setGate('ses_orch', {
       type: 'adjudicator',
       prompt: 'Check for blended RVR numbers.',
-      model: 'openai/gpt-4.1-mini', // ignored — oracle uses its configured model
+      model: 'opencodex/gpt-5.4-mini', // ignored — oracle uses its configured model
     });
 
     await hook.event(idleEvent('ses_orch'));
@@ -1180,8 +1180,8 @@ describe('deepwork-wakeup hook', () => {
       // must use the scoped name so the oracle runs on sol, not the
       // default oracle model (claude 4.8).
       resolveModel: async () => ({
-        providerID: 'fireworks-ai',
-        modelID: 'accounts/fireworks/models/glm-5p2',
+        providerID: 'opencodex',
+        modelID: 'glm-5p2',
         agent: 'orchestrator-glm52-sol',
       }),
       resolveOracleSpecialistName: (orchestratorAgentName) => {

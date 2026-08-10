@@ -457,10 +457,10 @@ describe('config-io', () => {
     expect(saved.disabled_agents).toEqual([]);
     expect(saved.presets.openai).toBeDefined();
     expect(saved.presets['opencode-go'].orchestrator.model).toBe(
-      'opencode-go/glm-5.1',
+      'opencodex/glm-5p2',
     );
     expect(saved.presets['opencode-go'].observer.model).toBe(
-      'opencode-go/kimi-k2.6',
+      'opencodex/kimi-k2p7-code',
     );
   });
 
@@ -560,7 +560,7 @@ describe('config-io', () => {
         preset: 'openai',
         presets: {
           openai: {
-            orchestrator: { model: 'openai/gpt-4' },
+            orchestrator: { model: 'opencodex/gpt-5.5' },
             oracle: { model: 'anthropic/claude-opus-4-6' },
             explorer: { model: 'github-copilot/grok-code-fast-1' },
             librarian: { model: 'zai-coding-plan/glm-4.7' },

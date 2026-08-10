@@ -68,8 +68,8 @@ All config files support **JSONC** (JSON with Comments):
   /* Agent model mappings */
   "presets": {
     "openai": {
-      "oracle": { "model": "openai/gpt-5.5" },
-      "explorer": { "model": "openai/gpt-5.4-mini" },
+      "oracle": { "model": "opencodex/gpt-5.5" },
+      "explorer": { "model": "opencodex/gpt-5.4-mini" },
     },
   },
 
@@ -182,7 +182,7 @@ and troubleshooting.
       "command": "claude-code-acp",
       "args": [],
       "description": "Claude Code subscription agent for deep research",
-      "wrapperModel": "openai/gpt-5.4-mini",
+      "wrapperModel": "opencodex/gpt-5.4-mini",
       "permissionMode": "ask",
       "timeoutMs": 300000
     },

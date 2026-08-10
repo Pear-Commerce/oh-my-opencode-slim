@@ -31,14 +31,14 @@ export const PROTECTED_AGENTS = new Set(['orchestrator', 'councillor']);
 // orchestrator is undefined so its model is fully resolved at runtime via priority fallback
 export const DEFAULT_MODELS: Record<AgentName, string | undefined> = {
   orchestrator: undefined,
-  oracle: 'openai/gpt-5.5',
-  librarian: 'openai/gpt-5.4-mini',
-  explorer: 'fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731',
-  designer: 'openai/gpt-5.4-mini',
-  fixer: 'fireworks-ai/accounts/fireworks/models/deepseek-v4-flash-0731',
-  observer: 'openai/gpt-5.4-mini',
-  council: 'openai/gpt-5.4-mini',
-  councillor: 'openai/gpt-5.4-mini',
+  oracle: 'opencodex/gpt-5.5',
+  librarian: 'opencodex/gpt-5.4-mini',
+  explorer: 'opencodex/deepseek-v4-flash-0731',
+  designer: 'opencodex/gpt-5.4-mini',
+  fixer: 'opencodex/deepseek-v4-flash-0731',
+  observer: 'opencodex/gpt-5.4-mini',
+  council: 'opencodex/gpt-5.4-mini',
+  councillor: 'opencodex/gpt-5.4-mini',
 };
 
 // Polling configuration

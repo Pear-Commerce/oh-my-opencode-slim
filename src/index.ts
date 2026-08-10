@@ -127,7 +127,7 @@ async function probeJSDOM(): Promise<string | null> {
  * correct orchestrator prompt is injected; only the model is pinned.
  * Change here and rebuild (`bun run build`) to use a different wakeup model.
  */
-const WAKEUP_MODEL = 'fireworks-ai/accounts/fireworks/models/glm-5p2';
+const WAKEUP_MODEL = 'opencodex/glm-5p2';
 
 const OhMyOpenCodeLite: Plugin = async (ctx) => {
   const sessionId = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15);
@@ -684,7 +684,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
           // Use the first model in the model array. Not all providers
           // require entries in opencodeConfig.provider — some are loaded
-          // automatically by opencode (e.g. github-copilot, openrouter).
+          // automatically by opencode or runtime layers (e.g. github-copilot).
           // We cannot distinguish these from truly unconfigured providers
           // at config-hook time, so we cannot gate on the provider config
           // keys. Runtime failover is handled separately by

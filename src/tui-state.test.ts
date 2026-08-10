@@ -31,16 +31,16 @@ describe('tui-state persistence', () => {
   test('persists enabled agent models', () => {
     recordTuiAgentModels({
       agentModels: {
-        explorer: 'openai/gpt-5.4-mini',
-        fixer: 'openai/gpt-5.4-mini',
+        explorer: 'opencodex/gpt-5.4-mini',
+        fixer: 'opencodex/gpt-5.4-mini',
       },
     });
 
     const snapshot = readTuiSnapshot();
 
     expect(snapshot.agentModels).toEqual({
-      explorer: 'openai/gpt-5.4-mini',
-      fixer: 'openai/gpt-5.4-mini',
+      explorer: 'opencodex/gpt-5.4-mini',
+      fixer: 'opencodex/gpt-5.4-mini',
     });
   });
 
@@ -48,18 +48,18 @@ describe('tui-state persistence', () => {
     recordTuiAgentModels({
       agentModels: {
         orchestrator: 'default',
-        explorer: 'openai/gpt-5.4-mini',
+        explorer: 'opencodex/gpt-5.4-mini',
       },
     });
 
     recordTuiAgentModel({
       agentName: 'orchestrator',
-      model: 'openai/gpt-5.5',
+      model: 'opencodex/gpt-5.5',
     });
 
     expect(readTuiSnapshot().agentModels).toEqual({
-      orchestrator: 'openai/gpt-5.5',
-      explorer: 'openai/gpt-5.4-mini',
+      orchestrator: 'opencodex/gpt-5.5',
+      explorer: 'opencodex/gpt-5.4-mini',
     });
   });
   test('ignores legacy config status fields in old snapshots', () => {
@@ -76,7 +76,7 @@ describe('tui-state persistence', () => {
       JSON.stringify({
         version: 1,
         updatedAt: Date.now(),
-        agentModels: { explorer: 'openai/gpt-5.4-mini' },
+        agentModels: { explorer: 'opencodex/gpt-5.4-mini' },
         configInvalid: true,
         configInvalidByProject: { old: true },
       }),
@@ -84,7 +84,7 @@ describe('tui-state persistence', () => {
 
     const snapshot = readTuiSnapshot();
     expect(snapshot.agentModels).toEqual({
-      explorer: 'openai/gpt-5.4-mini',
+      explorer: 'opencodex/gpt-5.4-mini',
     });
   });
 });

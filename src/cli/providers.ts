@@ -10,12 +10,12 @@ export const GENERATED_PRESETS = ['openai', 'opencode-go'] as const;
 // Model mappings by provider/preset.
 export const MODEL_MAPPINGS = {
   openai: {
-    orchestrator: { model: 'openai/gpt-5.5', variant: 'medium' },
-    oracle: { model: 'openai/gpt-5.5', variant: 'high' },
-    librarian: { model: 'openai/gpt-5.4-mini', variant: 'low' },
-    explorer: { model: 'openai/gpt-5.4-mini', variant: 'low' },
-    designer: { model: 'openai/gpt-5.4-mini', variant: 'medium' },
-    fixer: { model: 'openai/gpt-5.5', variant: 'low' },
+    orchestrator: { model: 'opencodex/gpt-5.5', variant: 'medium' },
+    oracle: { model: 'opencodex/gpt-5.5', variant: 'high' },
+    librarian: { model: 'opencodex/gpt-5.4-mini', variant: 'low' },
+    explorer: { model: 'opencodex/gpt-5.4-mini', variant: 'low' },
+    designer: { model: 'opencodex/gpt-5.4-mini', variant: 'medium' },
+    fixer: { model: 'opencodex/gpt-5.5', variant: 'low' },
   },
   kimi: {
     orchestrator: { model: 'kimi-for-coding/k2p5' },
@@ -45,14 +45,14 @@ export const MODEL_MAPPINGS = {
     fixer: { model: 'zai-coding-plan/glm-5', variant: 'low' },
   },
   'opencode-go': {
-    orchestrator: { model: 'opencode-go/glm-5.1' },
-    oracle: { model: 'opencode-go/deepseek-v4-pro', variant: 'max' },
-    council: { model: 'opencode-go/deepseek-v4-pro', variant: 'high' },
-    librarian: { model: 'opencode-go/minimax-m2.7' },
-    explorer: { model: 'opencode-go/minimax-m2.7' },
-    designer: { model: 'opencode-go/kimi-k2.6', variant: 'medium' },
-    fixer: { model: 'opencode-go/deepseek-v4-flash', variant: 'high' },
-    observer: { model: 'opencode-go/kimi-k2.6' },
+    orchestrator: { model: 'opencodex/glm-5p2' },
+    oracle: { model: 'opencodex/deepseek-v4-flash-0731', variant: 'max' },
+    council: { model: 'opencodex/deepseek-v4-flash-0731', variant: 'high' },
+    librarian: { model: 'opencodex/glm-5p2' },
+    explorer: { model: 'opencodex/glm-5p2' },
+    designer: { model: 'opencodex/kimi-k2p7-code', variant: 'medium' },
+    fixer: { model: 'opencodex/deepseek-v4-flash-0731', variant: 'high' },
+    observer: { model: 'opencodex/kimi-k2p7-code' },
   },
 } as const;
 

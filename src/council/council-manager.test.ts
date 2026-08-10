@@ -62,8 +62,8 @@ function createTestCouncilConfig(overrides?: {
   const councilConfig = CouncilConfigSchema.parse({
     presets: overrides?.presets ?? {
       default: {
-        alpha: { model: 'openai/gpt-5.4-mini' },
-        beta: { model: 'openai/gpt-5.3-codex' },
+        alpha: { model: 'opencodex/gpt-5.4-mini' },
+        beta: { model: 'opencodex/gpt-5.3-codex-spark' },
       },
     },
     default_preset: overrides?.default_preset,
@@ -146,10 +146,10 @@ describe('CouncilManager', () => {
       const config = createTestCouncilConfig({
         presets: {
           default: {
-            alpha: { model: 'openai/gpt-5.4-mini' },
+            alpha: { model: 'opencodex/gpt-5.4-mini' },
           },
           custom: {
-            beta: { model: 'openai/gpt-5.3-codex' },
+            beta: { model: 'opencodex/gpt-5.3-codex-spark' },
           },
         },
         default_preset: 'custom',
@@ -194,8 +194,8 @@ describe('CouncilManager', () => {
         council: {
           presets: {
             default: {
-              councillor1: { model: 'openai/gpt-5.4-mini' },
-              councillor2: { model: 'openai/gpt-5.3-codex' },
+              councillor1: { model: 'opencodex/gpt-5.4-mini' },
+              councillor2: { model: 'opencodex/gpt-5.3-codex-spark' },
             },
           },
         },
@@ -238,10 +238,10 @@ describe('CouncilManager', () => {
         council: {
           presets: {
             default: {
-              alpha: { model: 'openai/gpt-5.4-mini' },
+              alpha: { model: 'opencodex/gpt-5.4-mini' },
             },
             custom: {
-              beta: { model: 'openai/gpt-5.3-codex' },
+              beta: { model: 'opencodex/gpt-5.3-codex-spark' },
             },
           },
           default_preset: 'custom',
@@ -287,8 +287,8 @@ describe('CouncilManager', () => {
         council: {
           presets: {
             default: {
-              timeout: { model: 'openai/gpt-5.4-mini' },
-              success: { model: 'openai/gpt-5.3-codex' },
+              timeout: { model: 'opencodex/gpt-5.4-mini' },
+              success: { model: 'opencodex/gpt-5.3-codex-spark' },
             },
           },
         },
@@ -331,7 +331,7 @@ describe('CouncilManager', () => {
         council: {
           presets: {
             default: {
-              alpha: { model: 'openai/gpt-5.4-mini', variant: 'low' },
+              alpha: { model: 'opencodex/gpt-5.4-mini', variant: 'low' },
             },
           },
         },
@@ -366,8 +366,8 @@ describe('CouncilManager', () => {
         council: {
           presets: {
             default: {
-              alpha: { model: 'openai/gpt-5.4-mini' },
-              beta: { model: 'openai/gpt-5.3-codex' },
+              alpha: { model: 'opencodex/gpt-5.4-mini' },
+              beta: { model: 'opencodex/gpt-5.3-codex-spark' },
             },
           },
         },
@@ -426,7 +426,7 @@ describe('CouncilManager', () => {
         council: {
           presets: {
             default: {
-              alpha: { model: 'openai/gpt-5.4-mini' },
+              alpha: { model: 'opencodex/gpt-5.4-mini' },
             },
           },
         },
@@ -462,10 +462,10 @@ describe('CouncilManager', () => {
       const defaultConfig = createTestCouncilConfig({
         presets: {
           default: {
-            alpha: { model: 'openai/gpt-5.4-mini' },
+            alpha: { model: 'opencodex/gpt-5.4-mini' },
           },
           fast: {
-            beta: { model: 'openai/gpt-5.3-codex' },
+            beta: { model: 'opencodex/gpt-5.3-codex-spark' },
           },
         },
       });
@@ -510,10 +510,10 @@ describe('CouncilManager', () => {
       const config = createTestCouncilConfig({
         presets: {
           default: {
-            alpha: { model: 'openai/gpt-5.4-mini' },
+            alpha: { model: 'opencodex/gpt-5.4-mini' },
           },
           roled: {
-            beta: { model: 'openai/gpt-5.3-codex' },
+            beta: { model: 'opencodex/gpt-5.3-codex-spark' },
           },
         },
       });
@@ -596,7 +596,7 @@ describe('CouncilManager', () => {
         council: {
           presets: {
             default: {
-              alpha: { model: 'openai/gpt-5.4-mini' },
+              alpha: { model: 'opencodex/gpt-5.4-mini' },
             },
           },
         },
@@ -630,7 +630,7 @@ describe('CouncilManager', () => {
           presets: {
             default: {
               alpha: {
-                model: 'openai/gpt-5.4-mini',
+                model: 'opencodex/gpt-5.4-mini',
                 prompt: 'You are a meticulous reviewer focused on edge cases.',
               },
             },
@@ -677,7 +677,7 @@ describe('CouncilManager', () => {
         council: {
           presets: {
             default: {
-              alpha: { model: 'openai/gpt-5.4-mini' },
+              alpha: { model: 'opencodex/gpt-5.4-mini' },
             },
           },
         },
@@ -750,7 +750,7 @@ describe('CouncilManager', () => {
           councillor_retries: 1,
           presets: {
             default: {
-              alpha: { model: 'openai/gpt-5.4-mini' },
+              alpha: { model: 'opencodex/gpt-5.4-mini' },
             },
           },
         },
@@ -798,7 +798,7 @@ describe('CouncilManager', () => {
           councillor_retries: 2,
           presets: {
             default: {
-              alpha: { model: 'openai/gpt-5.4-mini' },
+              alpha: { model: 'opencodex/gpt-5.4-mini' },
             },
           },
         },
@@ -829,7 +829,7 @@ describe('CouncilManager', () => {
           councillor_retries: 1,
           presets: {
             default: {
-              alpha: { model: 'openai/gpt-5.4-mini' },
+              alpha: { model: 'opencodex/gpt-5.4-mini' },
             },
           },
         },
@@ -871,7 +871,7 @@ describe('CouncilManager', () => {
           councillor_retries: 1,
           presets: {
             default: {
-              alpha: { model: 'openai/gpt-5.4-mini' },
+              alpha: { model: 'opencodex/gpt-5.4-mini' },
             },
           },
         },
@@ -919,7 +919,7 @@ describe('CouncilManager', () => {
         council: {
           presets: {
             default: {
-              alpha: { model: 'openai/gpt-5.4-mini' },
+              alpha: { model: 'opencodex/gpt-5.4-mini' },
             },
           },
         },
@@ -981,7 +981,7 @@ describe('CouncilManager', () => {
         council: {
           presets: {
             default: {
-              alpha: { model: 'openai/gpt-5.4-mini' },
+              alpha: { model: 'opencodex/gpt-5.4-mini' },
             },
           },
         },
@@ -1026,7 +1026,7 @@ describe('CouncilManager', () => {
         council: {
           presets: {
             default: {
-              alpha: { model: 'openai/gpt-5.4-mini' },
+              alpha: { model: 'opencodex/gpt-5.4-mini' },
             },
           },
         },
@@ -1198,7 +1198,7 @@ describe('CouncilManager', () => {
       const config = createTestCouncilConfig({
         presets: {
           default: {
-            alpha: { model: 'openai/gpt-5.4-mini' },
+            alpha: { model: 'opencodex/gpt-5.4-mini' },
           },
         },
       });

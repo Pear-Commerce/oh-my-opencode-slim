@@ -105,21 +105,21 @@ bunx oh-my-opencode-slim@latest install
   "preset": "openai",
   "presets": {
     "openai": {
-      "orchestrator": { "model": "openai/gpt-5.5", "variant": "medium", "skills": ["*"], "mcps": ["*", "!context7"] },
-      "oracle": { "model": "openai/gpt-5.5", "variant": "high", "skills": ["simplify"], "mcps": [] },
-      "librarian": { "model": "openai/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": ["websearch", "context7", "gh_grep"] },
-      "explorer": { "model": "openai/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": [] },
-      "designer": { "model": "openai/gpt-5.4-mini", "variant": "medium", "skills": [], "mcps": [] },
-      "fixer": { "model": "openai/gpt-5.5", "variant": "low", "skills": [], "mcps": [] }
+      "orchestrator": { "model": "opencodex/gpt-5.5", "variant": "medium", "skills": ["*"], "mcps": ["*", "!context7"] },
+      "oracle": { "model": "opencodex/gpt-5.5", "variant": "high", "skills": ["simplify"], "mcps": [] },
+      "librarian": { "model": "opencodex/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": ["websearch", "context7", "gh_grep"] },
+      "explorer": { "model": "opencodex/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": [] },
+      "designer": { "model": "opencodex/gpt-5.4-mini", "variant": "medium", "skills": [], "mcps": [] },
+      "fixer": { "model": "opencodex/gpt-5.5", "variant": "low", "skills": [], "mcps": [] }
     },
     "opencode-go": {
-      "orchestrator": { "model": "opencode-go/glm-5.1", "skills": [ "*" ], "mcps": [ "*", "!context7" ] },
-      "oracle": { "model": "opencode-go/deepseek-v4-pro", "variant": "max", "skills": ["simplify"], "mcps": [] },
-      "council": { "model": "opencode-go/deepseek-v4-pro", "variant": "high", "skills": [], "mcps": [] },
-      "librarian": { "model": "opencode-go/minimax-m2.7", "skills": [], "mcps": [ "websearch", "context7", "gh_grep" ] },
-      "explorer": { "model": "opencode-go/minimax-m2.7", "skills": [], "mcps": [] },
-      "designer": { "model": "opencode-go/kimi-k2.6", "variant": "medium", "skills": [], "mcps": [] },
-      "fixer": { "model": "opencode-go/deepseek-v4-flash", "variant": "high", "skills": [], "mcps": [] }
+      "orchestrator": { "model": "opencodex/glm-5p2", "skills": [ "*" ], "mcps": [ "*", "!context7" ] },
+      "oracle": { "model": "opencodex/deepseek-v4-flash-0731", "variant": "max", "skills": ["simplify"], "mcps": [] },
+      "council": { "model": "opencodex/deepseek-v4-flash-0731", "variant": "high", "skills": [], "mcps": [] },
+      "librarian": { "model": "opencodex/glm-5p2", "skills": [], "mcps": [ "websearch", "context7", "gh_grep" ] },
+      "explorer": { "model": "opencodex/glm-5p2", "skills": [], "mcps": [] },
+      "designer": { "model": "opencodex/kimi-k2p7-code", "variant": "medium", "skills": [], "mcps": [] },
+      "fixer": { "model": "opencodex/deepseek-v4-flash-0731", "variant": "high", "skills": [], "mcps": [] }
     }
   }
 }
@@ -265,12 +265,12 @@ Worktrees 将 Git worktree 作为安全、隔离的编码通道管理，默认�
   </tr>
   <tr>
     <td colspan="2">
-      <b>默认模型：</b> <code>openai/gpt-5.5 (medium)</code>
+      <b>默认模型：</b> <code>opencodex/gpt-5.5 (medium)</code>
     </td>
   </tr>
   <tr>
     <td colspan="2">
-      <b>推荐模型：</b> <code>openai/gpt-5.5 (medium)</code> <code>anthropic/claude-opus-4.6</code>
+      <b>推荐模型：</b> <code>opencodex/gpt-5.5 (medium)</code> <code>anthropic/claude-opus-4.6</code>
     </td>
   </tr>
   <tr>
@@ -306,7 +306,7 @@ Worktrees 将 Git worktree 作为安全、隔离的编码通道管理，默认�
   </tr>
   <tr>
     <td colspan="2">
-      <b>默认模型：</b> <code>openai/gpt-5.4-mini</code>
+      <b>默认模型：</b> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
@@ -347,12 +347,12 @@ Worktrees 将 Git worktree 作为安全、隔离的编码通道管理，默认�
   </tr>
   <tr>
     <td colspan="2">
-      <b>默认模型：</b> <code>openai/gpt-5.5 (high)</code>
+      <b>默认模型：</b> <code>opencodex/gpt-5.5 (high)</code>
     </td>
   </tr>
   <tr>
     <td colspan="2">
-      <b>推荐模型：</b> <code>openai/gpt-5.5 (high)</code> <code>google/gemini-3.1-pro-preview (high)</code>
+      <b>推荐模型：</b> <code>opencodex/gpt-5.5 (high)</code> <code>google/gemini-3.1-pro-preview (high)</code>
     </td>
   </tr>
   <tr>
@@ -437,7 +437,7 @@ Worktrees 将 Git worktree 作为安全、隔离的编码通道管理，默认�
   </tr>
   <tr>
     <td colspan="2">
-      <b>默认模型：</b> <code>openai/gpt-5.4-mini</code>
+      <b>默认模型：</b> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
@@ -478,7 +478,7 @@ Worktrees 将 Git worktree 作为安全、隔离的编码通道管理，默认�
   </tr>
   <tr>
     <td colspan="2">
-      <b>默认模型：</b> <code>openai/gpt-5.4-mini</code>
+      <b>默认模型：</b> <code>opencodex/gpt-5.4-mini</code>
     </td>
   </tr>
   <tr>
@@ -519,12 +519,12 @@ Worktrees 将 Git worktree 作为安全、隔离的编码通道管理，默认�
   </tr>
   <tr>
     <td colspan="2">
-      <b>默认模型：</b> <code>openai/gpt-5.5 (low)</code>
+      <b>默认模型：</b> <code>opencodex/gpt-5.5 (low)</code>
     </td>
   </tr>
   <tr>
     <td colspan="2">
-      <b>推荐模型：</b> <code>openai/gpt-5.5 (low)</code>
+      <b>推荐模型：</b> <code>opencodex/gpt-5.5 (low)</code>
     </td>
   </tr>
   <tr>
@@ -555,7 +555,7 @@ Worktrees 将 Git worktree 作为安全、隔离的编码通道管理，默认�
 
 - 图像、屏幕截图、图表 → `read` 工具（原生图像支持）
 - PDF 和二进制文档 → `read` 工具（文本 + 结构提取）
-- **默认禁用** —— 通过设置 `"disabled_agents": []` 和配置具有视觉能力的模型来启用；若使用 `--preset=opencode-go` 预设安装，将自动使用 `opencode-go/kimi-k2.6` 启用它。
+- **默认禁用** —— 通过设置 `"disabled_agents": []` 和配置具有视觉能力的模型来启用；若使用 `--preset=opencode-go` 预设安装，将自动使用 `opencodex/kimi-k2p7-code` 启用它。
 
     </td>
   </tr>
@@ -566,7 +566,7 @@ Worktrees 将 Git worktree 作为安全、隔离的编码通道管理，默认�
   </tr>
   <tr>
     <td colspan="2">
-      <b>默认模型：</b> <code>openai/gpt-5.4-mini</code> — <i>需配置具有视觉能力的模型以启用</i>
+      <b>默认模型：</b> <code>opencodex/gpt-5.4-mini</code> — <i>需配置具有视觉能力的模型以启用</i>
     </td>
   </tr>
   <tr>

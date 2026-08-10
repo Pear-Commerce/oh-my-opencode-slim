@@ -676,7 +676,9 @@ export function detectCurrentConfig(): DetectedConfig {
       const models = Object.values(agents)
         .map((a) => a?.model)
         .filter(Boolean);
-      result.hasOpenAI = models.some((m) => m?.startsWith('openai/'));
+      result.hasOpenAI = models.some(
+        (m) => m?.startsWith('openai/') || m?.startsWith('opencodex/gpt-'),
+      );
       result.hasAnthropic = models.some((m) => m?.startsWith('anthropic/'));
       result.hasCopilot = models.some((m) => m?.startsWith('github-copilot/'));
       result.hasZaiPlan = models.some((m) => m?.startsWith('zai-coding-plan/'));

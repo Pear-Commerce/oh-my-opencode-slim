@@ -9,10 +9,10 @@ function solConfig(): PluginConfig {
     agents: {
       'orchestrator-glm52-sol': {
         orchestrator_class: true,
-        model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+        model: 'opencodex/glm-5p2',
         specialists: {
           oracle: {
-            model: 'openrouter/openai/gpt-5.6-sol',
+            model: 'opencodex/gpt-5.6-sol',
             variant: 'high',
             skills: ['simplify'],
             mcps: [],
@@ -31,7 +31,7 @@ describe('scoped specialist build behavior', () => {
     );
 
     expect(scoped).toBeDefined();
-    expect(scoped?.config.model).toBe('openrouter/openai/gpt-5.6-sol');
+    expect(scoped?.config.model).toBe('opencodex/gpt-5.6-sol');
     expect(scoped?.config.variant).toBe('high');
     expect(scoped?.hidden).toBe(true);
   });
@@ -73,17 +73,17 @@ describe('scoped specialist build behavior', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
             oracle: {
-              model: 'openrouter/openai/gpt-5.6-sol',
+              model: 'opencodex/gpt-5.6-sol',
               variant: 'high',
             },
           },
         },
         'orchestrator-kimi': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/kimi-k2p7-code',
+          model: 'opencodex/kimi-k2p7-code',
         },
       },
     };
@@ -127,9 +127,9 @@ describe('scoped specialist build behavior', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
-            librarian: { model: 'openrouter/openai/gpt-5.6-sol' },
+            librarian: { model: 'opencodex/gpt-5.6-sol' },
           },
         },
       },
@@ -149,9 +149,9 @@ describe('scoped specialist build behavior', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
-            oracle: { model: 'openrouter/openai/gpt-5.6-sol' },
+            oracle: { model: 'opencodex/gpt-5.6-sol' },
           },
         },
       },
@@ -188,9 +188,9 @@ describe('scoped specialist build behavior', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
-            observer: { model: 'openrouter/openai/gpt-5.6-sol' },
+            observer: { model: 'opencodex/gpt-5.6-sol' },
           },
         },
       },
@@ -202,7 +202,9 @@ describe('scoped specialist build behavior', () => {
     ).toBeUndefined();
 
     const owner = agents.find((a) => a.name === 'orchestrator-glm52-sol');
-    expect(owner?.config.prompt ?? '').not.toMatch(/@observer\b/);
+    expect(owner?.config.prompt ?? '').not.toContain(
+      '@observer__orchestrator-glm52-sol',
+    );
   });
 
   test('name collision between scoped name and custom agent throws', () => {
@@ -210,14 +212,14 @@ describe('scoped specialist build behavior', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
-            oracle: { model: 'openrouter/openai/gpt-5.6-sol' },
+            oracle: { model: 'opencodex/gpt-5.6-sol' },
           },
         },
         // A custom agent that collides with the would-be scoped name.
         'oracle__orchestrator-glm52-sol': {
-          model: 'openai/gpt-5.4-mini',
+          model: 'opencodex/gpt-5.4-mini',
         },
       },
     };
@@ -232,9 +234,9 @@ describe('scoped specialist build behavior', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
-            oracle: { model: 'openrouter/openai/gpt-5.6-sol', variant: 'high' },
+            oracle: { model: 'opencodex/gpt-5.6-sol', variant: 'high' },
           },
         },
         oracle: { displayName: 'advisor' },
@@ -261,12 +263,12 @@ describe('scoped specialist build behavior', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
             oracle: {
               model: [
                 { id: 'google/gemini-3-pro', variant: 'high' },
-                'openai/gpt-4',
+                'opencodex/gpt-5.5',
               ],
             },
           },
@@ -281,7 +283,7 @@ describe('scoped specialist build behavior', () => {
 
     expect(scoped?._modelArray).toEqual([
       { id: 'google/gemini-3-pro', variant: 'high' },
-      { id: 'openai/gpt-4' },
+      { id: 'opencodex/gpt-5.5' },
     ]);
     expect(scoped?.config.model).toBeUndefined();
   });
@@ -304,10 +306,10 @@ describe('scoped specialist build behavior', () => {
       agents: {
         'orchestrator-glm52-sol': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/glm-5p2',
+          model: 'opencodex/glm-5p2',
           specialists: {
-            oracle: { model: 'openrouter/openai/gpt-5.6-sol' },
-            fixer: { model: 'openrouter/openai/gpt-5.6-sol' },
+            oracle: { model: 'opencodex/gpt-5.6-sol' },
+            fixer: { model: 'opencodex/gpt-5.6-sol' },
           },
         },
       },

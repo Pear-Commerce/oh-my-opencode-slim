@@ -101,7 +101,7 @@ describe('createPresetManager', () => {
             orchestrator: { model: 'anthropic/claude-3.5-haiku' },
           },
           powerful: {
-            orchestrator: { model: 'openai/gpt-5.5' },
+            orchestrator: { model: 'opencodex/gpt-5.5' },
           },
         },
       };
@@ -125,7 +125,7 @@ describe('createPresetManager', () => {
         preset: 'cheap',
         presets: {
           cheap: { orchestrator: { model: 'anthropic/claude-3.5-haiku' } },
-          powerful: { orchestrator: { model: 'openai/gpt-5.5' } },
+          powerful: { orchestrator: { model: 'opencodex/gpt-5.5' } },
         },
       };
       const manager = createPresetManager(ctx, config);
@@ -161,7 +161,7 @@ describe('createPresetManager', () => {
         presets: {
           cheap: {
             orchestrator: { model: 'anthropic/claude-3.5-haiku' },
-            explorer: { model: 'openai/gpt-5.4-mini' },
+            explorer: { model: 'opencodex/gpt-5.4-mini' },
           },
         },
       };
@@ -187,8 +187,8 @@ describe('createPresetManager', () => {
     test('updates the TUI snapshot after a successful preset switch', async () => {
       recordTuiAgentModels({
         agentModels: {
-          explorer: 'openai/gpt-5.4-mini',
-          fixer: 'openai/gpt-5.4-mini',
+          explorer: 'opencodex/gpt-5.4-mini',
+          fixer: 'opencodex/gpt-5.4-mini',
         },
       });
 
@@ -197,7 +197,7 @@ describe('createPresetManager', () => {
         presets: {
           cheap: {
             orchestrator: { model: 'anthropic/claude-3.5-haiku' },
-            explorer: { model: 'openai/gpt-5.5' },
+            explorer: { model: 'opencodex/gpt-5.5' },
           },
         },
       };
@@ -210,8 +210,8 @@ describe('createPresetManager', () => {
       );
 
       expect(readTuiSnapshot().agentModels).toEqual({
-        explorer: 'openai/gpt-5.5',
-        fixer: 'openai/gpt-5.4-mini',
+        explorer: 'opencodex/gpt-5.5',
+        fixer: 'opencodex/gpt-5.4-mini',
         orchestrator: 'anthropic/claude-3.5-haiku',
       });
     });
@@ -266,7 +266,7 @@ describe('createPresetManager', () => {
       const config: PluginConfig = {
         presets: {
           precise: {
-            orchestrator: { model: 'openai/o3', temperature: 0.1 },
+            orchestrator: { model: 'opencodex/gpt-5.6-sol', temperature: 0.1 },
           },
         },
       };
@@ -280,7 +280,7 @@ describe('createPresetManager', () => {
 
       const text = getOutputText(output);
       expect(text).toContain('orchestrator');
-      expect(text).toContain('model: openai/o3');
+      expect(text).toContain('model: opencodex/gpt-5.6-sol');
       expect(text).toContain('temp: 0.1');
       expect(ctx.client.config.update).not.toHaveBeenCalled();
       expect(ctx.client.instance.dispose).not.toHaveBeenCalled();
@@ -356,7 +356,7 @@ describe('createPresetManager', () => {
       setActiveRuntimePreset('cheap');
       recordTuiAgentModels({
         agentModels: {
-          explorer: 'openai/gpt-5.4-mini',
+          explorer: 'opencodex/gpt-5.4-mini',
         },
       });
 
@@ -527,7 +527,7 @@ describe('createPresetManager', () => {
         presets: {
           fallback: {
             orchestrator: {
-              model: ['anthropic/claude-3.5-haiku', 'openai/gpt-5.5'],
+              model: ['anthropic/claude-3.5-haiku', 'opencodex/gpt-5.5'],
             },
           },
         },
@@ -556,7 +556,7 @@ describe('createPresetManager', () => {
             oracle: {
               model: [
                 { id: 'anthropic/claude-sonnet-4-6', variant: 'thinking' },
-                { id: 'openai/o3' },
+                { id: 'opencodex/gpt-5.6-sol' },
               ],
             },
           },
@@ -609,7 +609,7 @@ describe('createPresetManager', () => {
       const config: PluginConfig = {
         presets: {
           cheap: { orchestrator: { model: 'anthropic/claude-3.5-haiku' } },
-          powerful: { orchestrator: { model: 'openai/gpt-5.5' } },
+          powerful: { orchestrator: { model: 'opencodex/gpt-5.5' } },
         },
       };
       const manager = createPresetManager(ctx, config);

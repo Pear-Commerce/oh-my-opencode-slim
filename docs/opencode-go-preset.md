@@ -9,7 +9,7 @@ later.
 
 Because the `opencode-go` preset uses GLM-5.1 for Orchestrator and GLM is not
 multimodal, installing with `--preset=opencode-go` also enables the Observer
-agent and configures it with `opencode-go/kimi-k2.6` for visual analysis.
+agent and configures it with `opencodex/kimi-k2p7-code` for visual analysis.
 
 ## Install with OpenCode Go Active
 
@@ -48,14 +48,14 @@ role:
 
 | Agent | Model |
 |-------|-------|
-| Orchestrator | `opencode-go/glm-5.1` |
-| Oracle | `opencode-go/deepseek-v4-pro` (`max`) |
-| Council | `opencode-go/deepseek-v4-pro` (`high`) |
-| Librarian | `opencode-go/minimax-m2.7` |
-| Explorer | `opencode-go/minimax-m2.7` |
-| Designer | `opencode-go/kimi-k2.6` (`medium`) |
-| Fixer | `opencode-go/deepseek-v4-flash` (`high`) |
-| Observer | `opencode-go/kimi-k2.6` |
+| Orchestrator | `opencodex/glm-5p2` |
+| Oracle | `opencodex/deepseek-v4-flash-0731` (`max`) |
+| Council | `opencodex/deepseek-v4-flash-0731` (`high`) |
+| Librarian | `opencodex/glm-5p2` |
+| Explorer | `opencodex/glm-5p2` |
+| Designer | `opencodex/kimi-k2p7-code` (`medium`) |
+| Fixer | `opencodex/deepseek-v4-flash-0731` (`high`) |
+| Observer | `opencodex/kimi-k2p7-code` |
 
 ## Generated Config Shape
 
@@ -68,26 +68,26 @@ setting the top-level `preset` field:
   "disabled_agents": [],
   "presets": {
     "opencode-go": {
-      "orchestrator": { "model": "opencode-go/glm-5.1" },
+      "orchestrator": { "model": "opencodex/glm-5p2" },
       "oracle": {
-        "model": "opencode-go/deepseek-v4-pro",
+        "model": "opencodex/deepseek-v4-flash-0731",
         "variant": "max"
       },
       "council": {
-        "model": "opencode-go/deepseek-v4-pro",
+        "model": "opencodex/deepseek-v4-flash-0731",
         "variant": "high"
       },
-      "librarian": { "model": "opencode-go/minimax-m2.7" },
-      "explorer": { "model": "opencode-go/minimax-m2.7" },
+      "librarian": { "model": "opencodex/glm-5p2" },
+      "explorer": { "model": "opencodex/glm-5p2" },
       "designer": {
-        "model": "opencode-go/kimi-k2.6",
+        "model": "opencodex/kimi-k2p7-code",
         "variant": "medium"
       },
       "fixer": {
-        "model": "opencode-go/deepseek-v4-flash",
+        "model": "opencodex/deepseek-v4-flash-0731",
         "variant": "high"
       },
-      "observer": { "model": "opencode-go/kimi-k2.6" }
+      "observer": { "model": "opencodex/kimi-k2p7-code" }
     }
   }
 }

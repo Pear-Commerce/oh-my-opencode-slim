@@ -30,13 +30,13 @@ describe('providers', () => {
     expect(config.disabled_agents).toBeUndefined();
     expect((config.presets as any)['opencode-go']).toBeDefined();
     expect((config.presets as any)['opencode-go'].observer.model).toBe(
-      'opencode-go/kimi-k2.6',
+      'opencodex/kimi-k2p7-code',
     );
     const agents = (config.presets as any).openai;
     expect(agents).toBeDefined();
-    expect(agents.orchestrator.model).toBe('openai/gpt-5.5');
+    expect(agents.orchestrator.model).toBe('opencodex/gpt-5.5');
     expect(agents.orchestrator.variant).toBe('medium');
-    expect(agents.fixer.model).toBe('openai/gpt-5.5');
+    expect(agents.fixer.model).toBe('opencodex/gpt-5.5');
     expect(agents.fixer.variant).toBe('low');
   });
 
@@ -52,13 +52,13 @@ describe('providers', () => {
     expect(agents.orchestrator.model).toBe(
       MODEL_MAPPINGS.openai.orchestrator.model,
     );
-    expect(agents.oracle.model).toBe('openai/gpt-5.5');
+    expect(agents.oracle.model).toBe('opencodex/gpt-5.5');
     expect(agents.oracle.variant).toBe('high');
-    expect(agents.librarian.model).toBe('openai/gpt-5.4-mini');
+    expect(agents.librarian.model).toBe('opencodex/gpt-5.4-mini');
     expect(agents.librarian.variant).toBe('low');
-    expect(agents.explorer.model).toBe('openai/gpt-5.4-mini');
+    expect(agents.explorer.model).toBe('opencodex/gpt-5.4-mini');
     expect(agents.explorer.variant).toBe('low');
-    expect(agents.designer.model).toBe('openai/gpt-5.4-mini');
+    expect(agents.designer.model).toBe('opencodex/gpt-5.4-mini');
     expect(agents.designer.variant).toBe('medium');
   });
 
@@ -75,17 +75,17 @@ describe('providers', () => {
     expect((config.presets as any).openai).toBeDefined();
     const agents = (config.presets as any)['opencode-go'];
     expect(agents).toBeDefined();
-    expect(agents.orchestrator.model).toBe('opencode-go/glm-5.1');
-    expect(agents.oracle.model).toBe('opencode-go/deepseek-v4-pro');
+    expect(agents.orchestrator.model).toBe('opencodex/glm-5p2');
+    expect(agents.oracle.model).toBe('opencodex/deepseek-v4-flash-0731');
     expect(agents.oracle.variant).toBe('max');
-    expect(agents.council.model).toBe('opencode-go/deepseek-v4-pro');
+    expect(agents.council.model).toBe('opencodex/deepseek-v4-flash-0731');
     expect(agents.council.variant).toBe('high');
-    expect(agents.librarian.model).toBe('opencode-go/minimax-m2.7');
-    expect(agents.explorer.model).toBe('opencode-go/minimax-m2.7');
-    expect(agents.designer.model).toBe('opencode-go/kimi-k2.6');
-    expect(agents.fixer.model).toBe('opencode-go/deepseek-v4-flash');
+    expect(agents.librarian.model).toBe('opencodex/glm-5p2');
+    expect(agents.explorer.model).toBe('opencodex/glm-5p2');
+    expect(agents.designer.model).toBe('opencodex/kimi-k2p7-code');
+    expect(agents.fixer.model).toBe('opencodex/deepseek-v4-flash-0731');
     expect(agents.fixer.variant).toBe('high');
-    expect(agents.observer.model).toBe('opencode-go/kimi-k2.6');
+    expect(agents.observer.model).toBe('opencodex/kimi-k2p7-code');
   });
 
   test('generateLiteConfig rejects unsupported preset', () => {

@@ -8,7 +8,7 @@ const ModelIdSchema = z
   .string()
   .regex(
     /^[^/\s]+\/[^\s]+$/,
-    'Expected provider/model format (e.g. "openai/gpt-5.4-mini")',
+    'Expected provider/model format (e.g. "opencodex/gpt-5.4-mini")',
   );
 
 /**
@@ -21,7 +21,7 @@ const ModelIdSchema = z
  */
 export const CouncillorConfigSchema = z.object({
   model: ModelIdSchema.describe(
-    'Model ID in provider/model format (e.g. "openai/gpt-5.4-mini")',
+    'Model ID in provider/model format (e.g. "opencodex/gpt-5.4-mini")',
   ),
   variant: z.string().optional(),
   prompt: z
@@ -114,8 +114,8 @@ export const CouncillorExecutionModeSchema = z
  *   "council": {
  *     "presets": {
  *       "default": {
- *         "alpha": { "model": "openai/gpt-5.4-mini" },
- *         "beta":  { "model": "openai/gpt-5.3-codex" },
+ *         "alpha": { "model": "opencodex/gpt-5.4-mini" },
+ *         "beta":  { "model": "opencodex/gpt-5.3-codex-spark" },
  *         "gamma": { "model": "google/gemini-3-pro" }
  *       }
  *     },

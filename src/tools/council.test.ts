@@ -204,7 +204,7 @@ describe('council_session tool', () => {
         councillorResults: [
           {
             name: 'alpha',
-            model: 'openai/gpt-5.4-mini',
+            model: 'opencodex/gpt-5.4-mini',
             status: 'completed',
             result: 'Alpha says yes',
           },

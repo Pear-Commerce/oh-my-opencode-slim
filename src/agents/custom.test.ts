@@ -6,9 +6,9 @@ describe('custom-agent creation', () => {
   test('infers custom agents from unknown keys', () => {
     const config: PluginConfig = {
       agents: {
-        explorer: { model: 'openai/gpt-5.4-mini' },
+        explorer: { model: 'opencodex/gpt-5.4-mini' },
         reviewer: {
-          model: 'openai/gpt-5.5',
+          model: 'opencodex/gpt-5.5',
           prompt: 'You are the custom reviewer agent.',
         },
       },
@@ -21,7 +21,7 @@ describe('custom-agent creation', () => {
 
     const customAgent = agents.find((agent) => agent.name === 'reviewer');
     expect(customAgent).toBeDefined();
-    expect(customAgent?.config.model).toBe('openai/gpt-5.5');
+    expect(customAgent?.config.model).toBe('opencodex/gpt-5.5');
     expect(customAgent?.config.prompt).toBe(
       'You are the custom reviewer agent.',
     );
@@ -31,7 +31,7 @@ describe('custom-agent creation', () => {
     const config: PluginConfig = {
       agents: {
         'test-auditor': {
-          model: 'openai/gpt-5.4-mini',
+          model: 'opencodex/gpt-5.4-mini',
           prompt: 'You are a custom subagent for auditing.',
           orchestratorPrompt:
             '@test-auditor\n- Role: Compliance audit specialist',
@@ -58,7 +58,7 @@ describe('custom-agent creation', () => {
       agents: {
         'orchestrator-kimi-xhigh': {
           orchestrator_class: true,
-          model: 'fireworks-ai/accounts/fireworks/models/kimi-k2p7-code',
+          model: 'opencodex/kimi-k2p7-code',
           variant: 'xhigh',
           skills: ['*'],
           mcps: ['*', '!context7'],
@@ -72,7 +72,7 @@ describe('custom-agent creation', () => {
     );
     expect(custom).toBeDefined();
     expect(custom?.config.model).toBe(
-      'fireworks-ai/accounts/fireworks/models/kimi-k2p7-code',
+      'opencodex/kimi-k2p7-code',
     );
     expect(custom?.config.variant).toBe('xhigh');
     expect(custom?.config.temperature).toBe(0.1);
@@ -119,7 +119,7 @@ describe('custom-agent creation', () => {
       disabled_agents: ['test-auditor', 'designer'],
       agents: {
         'test-auditor': {
-          model: 'openai/gpt-5.4-mini',
+          model: 'opencodex/gpt-5.4-mini',
           prompt: 'You are a disabled custom agent.',
         },
       },
@@ -137,7 +137,7 @@ describe('custom-agent creation', () => {
     const config: PluginConfig = {
       agents: {
         'unsafe/name': {
-          model: 'openai/gpt-5.4-mini',
+          model: 'opencodex/gpt-5.4-mini',
         },
       },
     };
@@ -149,7 +149,7 @@ describe('custom-agent creation', () => {
     const config: PluginConfig = {
       agents: {
         janitor: {
-          model: 'openai/gpt-5.4-mini',
+          model: 'opencodex/gpt-5.4-mini',
           orchestratorPrompt: '@cleanup\n- Role: Cleanup specialist',
         },
       },
@@ -172,7 +172,7 @@ describe('custom-agent creation', () => {
           timeoutMs: 300000,
           permissionMode: 'ask',
           description: 'Claude Code research via ACP',
-          wrapperModel: 'openai/gpt-5.4-mini',
+          wrapperModel: 'opencodex/gpt-5.4-mini',
         },
       },
     };
@@ -183,7 +183,7 @@ describe('custom-agent creation', () => {
 
     expect(wrapper).toBeDefined();
     expect(wrapper?.description).toBe('Claude Code research via ACP');
-    expect(wrapper?.config.model).toBe('openai/gpt-5.4-mini');
+    expect(wrapper?.config.model).toBe('opencodex/gpt-5.4-mini');
     expect(wrapper?.config.prompt).toContain('acp_run');
     expect(orchestrator?.config.prompt).toContain('@claude-research');
   });
@@ -225,7 +225,7 @@ describe('custom-agent creation', () => {
   test('rejects acpAgents that conflict with custom agents', () => {
     const config: PluginConfig = {
       agents: {
-        bridge: { model: 'openai/gpt-5.4-mini' },
+        bridge: { model: 'opencodex/gpt-5.4-mini' },
       },
       acpAgents: {
         bridge: {

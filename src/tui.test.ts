@@ -23,8 +23,8 @@ describe('tui sidebar agents', () => {
     const agentNames = getSidebarAgentNames(
       createSnapshot({
         agentModels: {
-          explorer: 'openai/gpt-5.4-mini',
-          fixer: 'openai/gpt-5.4-mini',
+          explorer: 'opencodex/gpt-5.4-mini',
+          fixer: 'opencodex/gpt-5.4-mini',
         },
       }),
     );
@@ -47,12 +47,12 @@ describe('tui sidebar agents', () => {
 
 describe('formatSidebarModelName', () => {
   test('keeps only the segment after the last slash', () => {
-    expect(formatSidebarModelName('openai/gpt-5.5-fast')).toBe('gpt-5.5-fast');
+    expect(formatSidebarModelName('opencodex/gpt-5.5-fast')).toBe('gpt-5.5-fast');
     expect(
       formatSidebarModelName(
-        'fireworks-ai/accounts/fireworks/routers/kimi-k2p5-turbo',
+        'opencodex/kimi-k2p7-code',
       ),
-    ).toBe('kimi-k2p5-turbo');
+    ).toBe('kimi-k2p7-code');
   });
 
   test('leaves model names without slashes unchanged', () => {

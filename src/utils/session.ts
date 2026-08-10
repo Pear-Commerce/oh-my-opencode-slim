@@ -51,7 +51,7 @@ export async function abortSessionWithTimeout(
 
 /**
  * Extract the short model label from a "provider/model" string.
- * E.g. "openai/gpt-5.4-mini" → "gpt-5.4-mini"
+ * E.g. "opencodex/gpt-5.4-mini" → "gpt-5.4-mini"
  */
 export function shortModelLabel(model: string): string {
   return model.split('/').pop() ?? model;

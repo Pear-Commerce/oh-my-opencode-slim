@@ -32,4 +32,4 @@
 
 | Doc | Contents |
 |-----|----------|
-| [Author's Preset](authors-preset.md) | The exact config the author runs daily — OpenAI + Fireworks AI + GitHub Copilot |
+| [Author's Preset](authors-preset.md) | The exact config the author runs daily — OpenCodex-routed OpenAI and Fireworks models |

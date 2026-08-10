@@ -84,7 +84,7 @@ describe('fixer-review hook', () => {
 
     const { client, create, promptAsync } = makeClient();
     const hook = createFixerReviewHook(client, {
-      oracleModel: 'openrouter/anthropic/claude-opus-4.8',
+      oracleModel: 'opencodex/gpt-5.6-sol',
       directory: dir,
       oracleTimeoutMs: 1000,
     });
@@ -121,7 +121,7 @@ describe('fixer-review hook', () => {
 
     const { client, create, promptAsync } = makeClient();
     const hook = createFixerReviewHook(client, {
-      oracleModel: 'openrouter/anthropic/claude-opus-4.8',
+      oracleModel: 'opencodex/gpt-5.6-sol',
       directory: dir,
     });
 
@@ -153,7 +153,7 @@ describe('fixer-review hook', () => {
 
     const { client, create } = makeClient();
     const hook = createFixerReviewHook(client, {
-      oracleModel: 'openrouter/anthropic/claude-opus-4.8',
+      oracleModel: 'opencodex/gpt-5.6-sol',
       directory: dir,
     });
 
@@ -182,7 +182,7 @@ describe('fixer-review hook', () => {
 
     const { client, create } = makeClient();
     const hook = createFixerReviewHook(client, {
-      oracleModel: 'openrouter/anthropic/claude-opus-4.8',
+      oracleModel: 'opencodex/gpt-5.6-sol',
       directory: dir,
     });
 
@@ -207,7 +207,7 @@ describe('fixer-review hook', () => {
 
     const { client, create } = makeClient();
     const hook = createFixerReviewHook(client, {
-      oracleModel: 'openrouter/anthropic/claude-opus-4.8',
+      oracleModel: 'opencodex/gpt-5.6-sol',
       directory: dir,
     });
 
@@ -232,7 +232,7 @@ describe('fixer-review hook', () => {
 
     const { client, create } = makeClient();
     const hook = createFixerReviewHook(client, {
-      oracleModel: 'openrouter/anthropic/claude-opus-4.8',
+      oracleModel: 'opencodex/gpt-5.6-sol',
       directory: dir,
     });
 
@@ -257,7 +257,7 @@ describe('fixer-review hook', () => {
 
     const { client, create } = makeClient();
     const hook = createFixerReviewHook(client, {
-      oracleModel: 'openrouter/anthropic/claude-opus-4.8',
+      oracleModel: 'opencodex/gpt-5.6-sol',
       directory: dir,
     });
 
@@ -307,7 +307,7 @@ describe('fixer-review hook', () => {
 
     const { client, create } = makeClient();
     const hook = createFixerReviewHook(client, {
-      oracleModel: 'openrouter/anthropic/claude-opus-4.8',
+      oracleModel: 'opencodex/gpt-5.6-sol',
       directory: dir,
       enabled: false,
     });
@@ -333,7 +333,7 @@ describe('fixer-review hook', () => {
 
     const { client } = makeClient();
     const hook = createFixerReviewHook(client, {
-      oracleModel: 'openrouter/anthropic/claude-opus-4.8',
+      oracleModel: 'opencodex/gpt-5.6-sol',
       directory: dir,
     });
 
@@ -361,7 +361,7 @@ describe('fixer-review hook', () => {
 
     const { client, create } = makeClient();
     const hook = createFixerReviewHook(client, {
-      oracleModel: 'openrouter/anthropic/claude-opus-4.8',
+      oracleModel: 'opencodex/gpt-5.6-sol',
       directory: dir,
     });
 
