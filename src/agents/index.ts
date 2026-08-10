@@ -41,7 +41,19 @@ type AgentFactory = (
 
 const COUNCIL_TOOL_ALLOWED_AGENTS = new Set(['council']);
 const SAFE_AGENT_ALIAS_RE = /^[a-z][a-z0-9_-]*$/i;
-const CODEX_SOL_ORCHESTRATOR = 'orchestrator-glm52-sol';
+const CODEX_SOL_OWNER = 'orchestrator-glm52-sol';
+const CODEX_SOL_RELAY_AGENT = 'oracle__orchestrator-glm52-sol';
+const CODEX_SOL_RELAY_PROMPT = `<Role>
+You are the DeepSeek Sol relay subagent between the GLM orchestrator and Codex CLI. You do not solve tasks yourself.
+</Role>
+
+<RequiredBehavior>
+For every user request, immediately call codex_sol exactly once.
+Pass the user's request as the prompt argument without adding, removing, summarizing, or rewriting anything.
+Do not call any other tool and do not answer from your own knowledge.
+After codex_sol succeeds, return its output verbatim with no introduction, summary, markdown wrapper, or commentary.
+If codex_sol fails, report that failure directly. Never fall back to an OpenCode task or subagent.
+</RequiredBehavior>`;
 
 function normalizeDisplayName(displayName: string): string {
   const trimmed = displayName.trim();
@@ -277,7 +289,7 @@ function applyDefaultPermissions(
     : 'deny';
   const codexSolPerm =
     config?.use_codex_for_sol_orchestrator === true &&
-    agent.name === CODEX_SOL_ORCHESTRATOR
+    agent.name === CODEX_SOL_RELAY_AGENT
       ? 'allow'
       : 'deny';
 
@@ -507,14 +519,6 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
       // rewrite occurs (the owner prompt already excludes disabled agents).
       if (disabled.has(specialistName)) continue;
 
-      if (
-        config?.use_codex_for_sol_orchestrator === true &&
-        agent.name === CODEX_SOL_ORCHESTRATOR &&
-        specialistName === 'oracle'
-      ) {
-        continue;
-      }
-
       const factory = SUBAGENT_FACTORIES[specialistName as SubagentName];
       if (!factory) continue; // defensive: schema enum gates valid names
 
@@ -550,6 +554,13 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
       // high variant). displayName is not part of SpecialistOverrideConfig,
       // so scoped agents never get a displayName.
       applyOverrides(scopedAgent, specialistOverride);
+      if (
+        config?.use_codex_for_sol_orchestrator === true &&
+        agent.name === CODEX_SOL_OWNER &&
+        specialistName === 'oracle'
+      ) {
+        scopedAgent.config.prompt = CODEX_SOL_RELAY_PROMPT;
+      }
 
       // MCPs: use the override's mcps if provided, otherwise inherit the
       // base specialist's resolved MCP list (config override or default).
@@ -720,24 +731,6 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
     const remap = scopedRemap.get(primaryOrchestrator.name);
     if (remap) {
       injectScopedSpecialistNames(primaryOrchestrator, remap, displayNameMap);
-    }
-  }
-
-  if (config?.use_codex_for_sol_orchestrator === true) {
-    const solOrchestrator = customOrchestrators.find(
-      (agent) => agent.name === CODEX_SOL_ORCHESTRATOR,
-    );
-    if (solOrchestrator?.config.prompt) {
-      solOrchestrator.config.prompt = solOrchestrator.config.prompt
-        .replace(/@oracle\b/g, 'codex_sol')
-        .concat(
-          '\n\n<CodexSolRouting>\n',
-          'For every codex_sol lane, call the codex_sol tool directly instead of the task tool. ',
-          'Pass exactly the prompt you would have sent to the oracle subagent. ',
-          'Do not include OpenCode system instructions, this orchestrator prompt, conversation history, or wrapper text. ',
-          'The tool runs Codex CLI in the current working directory and returns its answer.\n',
-          '</CodexSolRouting>',
-        );
     }
   }
 

@@ -18302,14 +18302,14 @@ var require_turndown_cjs = __commonJS((exports, module) => {
       } else if (node.nodeType === 1) {
         replacement = replacementForNode.call(self, node);
       }
-      return join19(output, replacement);
+      return join20(output, replacement);
     }, "");
   }
   function postProcess(output) {
     var self = this;
     this.rules.forEach(function(rule) {
       if (typeof rule.append === "function") {
-        output = join19(output, rule.append(self.options));
+        output = join20(output, rule.append(self.options));
       }
     });
     return output.replace(/^[\t\r\n]+/, "").replace(/[\t\r\n\s]+$/, "");
@@ -18322,7 +18322,7 @@ var require_turndown_cjs = __commonJS((exports, module) => {
       content = content.trim();
     return whitespace.leading + rule.replacement(content, node, this.options) + whitespace.trailing;
   }
-  function join19(output, replacement) {
+  function join20(output, replacement) {
     var s1 = trimTrailingNewlines(output);
     var s2 = trimLeadingNewlines(replacement);
     var nls = Math.max(output.length - s1.length, replacement.length - s2.length);
@@ -18827,7 +18827,7 @@ var PluginConfigSchema = z2.object({
   preset: z2.string().optional(),
   setDefaultAgent: z2.boolean().optional(),
   autoUpdate: z2.boolean().optional().describe("Disable automatic installation of plugin updates when false. Defaults to true."),
-  use_codex_for_sol_orchestrator: z2.boolean().optional().describe("Route the orchestrator-glm52-sol oracle lane through the local Codex CLI instead of an OpenCode subagent."),
+  use_codex_for_sol_orchestrator: z2.boolean().optional().describe("Route orchestrator-glm52-sol through a scoped DeepSeek oracle subagent that relays each delegation into a persistent local Codex CLI conversation."),
   codex_sol_command: z2.string().min(1).optional().describe("Absolute path or command used to launch the Codex CLI for Sol orchestration. An absolute path is recommended for GUI hosts with a minimal PATH."),
   presets: z2.record(z2.string(), PresetSchema).optional(),
   agents: z2.record(z2.string(), AgentOverrideConfigSchema).optional(),
@@ -19986,7 +19986,19 @@ ${customAppendPrompt}`;
 // src/agents/index.ts
 var COUNCIL_TOOL_ALLOWED_AGENTS = new Set(["council"]);
 var SAFE_AGENT_ALIAS_RE = /^[a-z][a-z0-9_-]*$/i;
-var CODEX_SOL_ORCHESTRATOR = "orchestrator-glm52-sol";
+var CODEX_SOL_OWNER = "orchestrator-glm52-sol";
+var CODEX_SOL_RELAY_AGENT = "oracle__orchestrator-glm52-sol";
+var CODEX_SOL_RELAY_PROMPT = `<Role>
+You are the DeepSeek Sol relay subagent between the GLM orchestrator and Codex CLI. You do not solve tasks yourself.
+</Role>
+
+<RequiredBehavior>
+For every user request, immediately call codex_sol exactly once.
+Pass the user's request as the prompt argument without adding, removing, summarizing, or rewriting anything.
+Do not call any other tool and do not answer from your own knowledge.
+After codex_sol succeeds, return its output verbatim with no introduction, summary, markdown wrapper, or commentary.
+If codex_sol fails, report that failure directly. Never fall back to an OpenCode task or subagent.
+</RequiredBehavior>`;
 function normalizeDisplayName(displayName) {
   const trimmed = displayName.trim();
   return trimmed.startsWith("@") ? trimmed.slice(1) : trimmed;
@@ -20114,7 +20126,7 @@ function applyDefaultPermissions(agent, configuredSkills, config, skillAgentName
   const questionPerm = existing.question === "deny" ? "deny" : "allow";
   const councilSessionPerm = COUNCIL_TOOL_ALLOWED_AGENTS.has(agent.name) ? existing.council_session ?? "allow" : "deny";
   const cancelTaskPerm = isOrchestratorClassAgent(config, agent.name) ? existing.cancel_task ?? "allow" : "deny";
-  const codexSolPerm = config?.use_codex_for_sol_orchestrator === true && agent.name === CODEX_SOL_ORCHESTRATOR ? "allow" : "deny";
+  const codexSolPerm = config?.use_codex_for_sol_orchestrator === true && agent.name === CODEX_SOL_RELAY_AGENT ? "allow" : "deny";
   agent.config.permission = {
     ...existing,
     question: questionPerm,
@@ -20252,9 +20264,6 @@ function createAgents(config) {
     for (const [specialistName, specialistOverride] of Object.entries(specialists)) {
       if (disabled.has(specialistName))
         continue;
-      if (config?.use_codex_for_sol_orchestrator === true && agent.name === CODEX_SOL_ORCHESTRATOR && specialistName === "oracle") {
-        continue;
-      }
       const factory = SUBAGENT_FACTORIES[specialistName];
       if (!factory)
         continue;
@@ -20271,6 +20280,9 @@ function createAgents(config) {
       scopedAgent.name = scopedName;
       scopedAgent.hidden = true;
       applyOverrides(scopedAgent, specialistOverride);
+      if (config?.use_codex_for_sol_orchestrator === true && agent.name === CODEX_SOL_OWNER && specialistName === "oracle") {
+        scopedAgent.config.prompt = CODEX_SOL_RELAY_PROMPT;
+      }
       scopedAgent.mcps = specialistOverride.mcps ?? getAgentMcpList(specialistName, config) ?? [];
       applyDefaultPermissions(scopedAgent, specialistOverride.skills, config, specialistName);
       scopedSubAgents.push(scopedAgent);
@@ -20374,16 +20386,6 @@ ${extraPrompt}`;
     const remap = scopedRemap.get(primaryOrchestrator.name);
     if (remap) {
       injectScopedSpecialistNames(primaryOrchestrator, remap, displayNameMap);
-    }
-  }
-  if (config?.use_codex_for_sol_orchestrator === true) {
-    const solOrchestrator = customOrchestrators.find((agent) => agent.name === CODEX_SOL_ORCHESTRATOR);
-    if (solOrchestrator?.config.prompt) {
-      solOrchestrator.config.prompt = solOrchestrator.config.prompt.replace(/@oracle\b/g, "codex_sol").concat(`
-
-<CodexSolRouting>
-`, "For every codex_sol lane, call the codex_sol tool directly instead of the task tool. ", "Pass exactly the prompt you would have sent to the oracle subagent. ", "Do not include OpenCode system instructions, this orchestrator prompt, conversation history, or wrapper text. ", `The tool runs Codex CLI in the current working directory and returns its answer.
-`, "</CodexSolRouting>");
     }
   }
   return [orchestrator, ...customOrchestrators, ...allSubAgents];
@@ -33862,26 +33864,87 @@ function unknownTaskOutput(taskID, message) {
 }
 // src/tools/codex-sol.ts
 init_compat();
-import { tool as tool4 } from "@opencode-ai/plugin";
-var CODEX_SOL_ORCHESTRATOR2 = "orchestrator-glm52-sol";
+import { mkdir as mkdir2, readFile as readFile4, rename as rename2, writeFile as writeFile2 } from "node:fs/promises";
+import { homedir as homedir7 } from "node:os";
+import { dirname as dirname10, join as join18 } from "node:path";
+import {
+  tool as tool4
+} from "@opencode-ai/plugin";
+var CODEX_SOL_RELAY_AGENT2 = "oracle__orchestrator-glm52-sol";
 var DEFAULT_MODEL = "gpt-5.6-sol";
+var DEFAULT_REASONING_EFFORT = "high";
 var DEFAULT_TIMEOUT_MS2 = 900000;
-async function runCodexSol(prompt, options) {
+var DEFAULT_STATE_FILE = join18(process.env.XDG_DATA_HOME ?? join18(homedir7(), ".local", "share"), "opencode", "storage", "oh-my-opencode-slim", "codex-sol-sessions.json");
+
+class JsonCodexSolSessionStore {
+  path;
+  state;
+  writeQueue = Promise.resolve();
+  constructor(path17) {
+    this.path = path17;
+  }
+  async get(openCodeSessionID) {
+    await this.load();
+    return this.state?.[openCodeSessionID];
+  }
+  async set(openCodeSessionID, codexSessionID) {
+    await this.load();
+    this.state = { ...this.state, [openCodeSessionID]: codexSessionID };
+    this.writeQueue = this.writeQueue.catch(() => {}).then(async () => {
+      const temporary = `${this.path}.tmp`;
+      await mkdir2(dirname10(this.path), { recursive: true });
+      await writeFile2(temporary, `${JSON.stringify(this.state, null, 2)}
+`);
+      await rename2(temporary, this.path);
+    });
+    await this.writeQueue;
+  }
+  async load() {
+    if (this.state)
+      return;
+    try {
+      const parsed = JSON.parse(await readFile4(this.path, "utf8"));
+      this.state = Object.fromEntries(Object.entries(parsed).filter((entry) => typeof entry[1] === "string" && entry[1].length > 0));
+    } catch {
+      this.state = {};
+    }
+  }
+}
+function createCodexSolSessionStore(path17 = DEFAULT_STATE_FILE) {
+  return new JsonCodexSolSessionStore(path17);
+}
+var defaultSessionStore = createCodexSolSessionStore();
+async function runCodexSolSession(prompt, options) {
   const command = options.command ?? "codex";
   const model = options.model ?? DEFAULT_MODEL;
+  const reasoningEffort = options.reasoningEffort ?? DEFAULT_REASONING_EFFORT;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS2;
-  const child = crossSpawn([
+  const args = options.sessionID ? [
     command,
     "exec",
-    "--ephemeral",
+    "resume",
+    "--json",
+    "--model",
+    model,
+    "--config",
+    `model_reasoning_effort="${reasoningEffort}"`,
+    options.sessionID,
+    "-"
+  ] : [
+    command,
+    "exec",
+    "--json",
     "--color",
     "never",
     "--model",
     model,
+    "--config",
+    `model_reasoning_effort="${reasoningEffort}"`,
     "--cd",
     options.cwd,
     "-"
-  ], {
+  ];
+  const child = crossSpawn(args, {
     cwd: options.cwd,
     stdin: "pipe",
     stdout: "pipe",
@@ -33898,11 +33961,10 @@ async function runCodexSol(prompt, options) {
     if (!options.signal)
       return;
     abortHandler = () => reject(new Error("Codex CLI run was aborted"));
-    if (options.signal.aborted) {
+    if (options.signal.aborted)
       abortHandler();
-      return;
-    }
-    options.signal.addEventListener("abort", abortHandler, { once: true });
+    else
+      options.signal.addEventListener("abort", abortHandler, { once: true });
   });
   try {
     const exitCode = await Promise.race([child.exited, timeout, aborted]);
@@ -33910,14 +33972,29 @@ async function runCodexSol(prompt, options) {
       child.stdout(),
       child.stderr()
     ]);
-    const answer = stdout.trim();
-    if (exitCode !== 0) {
-      throw new Error(`Codex CLI exited with code ${exitCode}: ${stderr.trim() || answer || "no output"}`);
+    let sessionID = options.sessionID;
+    let answer = "";
+    for (const line of stdout.split(`
+`)) {
+      if (!line.trim())
+        continue;
+      try {
+        const event = JSON.parse(line);
+        if (event.type === "thread.started" && event.thread_id) {
+          sessionID = event.thread_id;
+        }
+        if (event.type === "item.completed" && event.item?.type === "agent_message" && typeof event.item.text === "string") {
+          answer = event.item.text;
+        }
+      } catch {}
     }
-    if (!answer) {
+    if (exitCode !== 0) {
+      throw new Error(`Codex CLI exited with code ${exitCode}: ${stderr.trim() || "no output"}`);
+    }
+    if (!answer.trim()) {
       throw new Error(`Codex CLI completed without an answer${stderr.trim() ? `: ${stderr.trim()}` : ""}`);
     }
-    return answer;
+    return { answer: answer.trim(), sessionID };
   } finally {
     if (timer)
       clearTimeout(timer);
@@ -33929,22 +34006,30 @@ async function runCodexSol(prompt, options) {
   }
 }
 function createCodexSolTool(options) {
-  const runner = options?.runner ?? runCodexSol;
+  const runner = options?.runner ?? runCodexSolSession;
+  const sessionStore = options?.sessionStore ?? defaultSessionStore;
   return tool4({
-    description: "Run the Sol reasoning lane through the local Codex CLI and return its answer without creating an OpenCode subagent.",
+    description: "Send the exact user prompt through a persistent local Codex CLI conversation and return the Codex answer.",
     args: {
-      prompt: tool4.schema.string().min(1).describe("The exact oracle delegation prompt to send to Codex")
+      prompt: tool4.schema.string().min(1).describe("The exact user prompt to send to Codex without changes")
     },
     async execute(args, ctx) {
-      if (ctx.agent !== CODEX_SOL_ORCHESTRATOR2) {
-        throw new Error(`codex_sol can only be used by ${CODEX_SOL_ORCHESTRATOR2}`);
+      if (ctx.agent !== CODEX_SOL_RELAY_AGENT2) {
+        throw new Error(`codex_sol can only be used by ${CODEX_SOL_RELAY_AGENT2}`);
       }
-      return runner(args.prompt, {
+      const prompt = options?.resolvePrompt ? await options.resolvePrompt(args.prompt, ctx) : args.prompt;
+      const result = await runner(prompt, {
         command: options?.command,
         cwd: ctx.directory,
         model: options?.model ?? DEFAULT_MODEL,
-        signal: ctx.abort
+        reasoningEffort: options?.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+        signal: ctx.abort,
+        sessionID: await sessionStore.get(ctx.sessionID)
       });
+      if (result.sessionID) {
+        await sessionStore.set(ctx.sessionID, result.sessionID);
+      }
+      return result.answer;
     }
   });
 }
@@ -34446,7 +34531,7 @@ import {
 } from "@opencode-ai/plugin";
 
 // src/tools/smartfetch/binary.ts
-import { mkdir as mkdir2, writeFile as writeFile2 } from "node:fs/promises";
+import { mkdir as mkdir3, writeFile as writeFile3 } from "node:fs/promises";
 import path18 from "node:path";
 function extensionForMime(contentType) {
   const mime = contentType.split(";")[0]?.trim().toLowerCase();
@@ -34466,14 +34551,14 @@ function buildBinaryResultMessage(fetchResult, savedPath) {
   return `${subject} content omitted because it exceeds the download limit.`;
 }
 async function saveBinary(binaryDir, data, contentType, filename) {
-  await mkdir2(binaryDir, { recursive: true });
+  await mkdir3(binaryDir, { recursive: true });
   const initialName = filename || `webfetch-${Date.now()}.${extensionForMime(contentType)}`;
   const parsed = path18.parse(initialName);
   for (let attempt = 0;attempt < 1000; attempt++) {
     const candidateName = attempt === 0 ? initialName : `${parsed.name}-${attempt}${parsed.ext || `.${extensionForMime(contentType)}`}`;
     const file = path18.join(binaryDir, candidateName);
     try {
-      await writeFile2(file, data, { flag: "wx" });
+      await writeFile3(file, data, { flag: "wx" });
       return file;
     } catch (error) {
       if (typeof error === "object" && error && "code" in error && error.code === "EEXIST") {
@@ -36021,7 +36106,7 @@ function isInvalidLlmsResult(fetchResult) {
 
 // src/tools/smartfetch/secondary-model.ts
 import { existsSync as existsSync13 } from "node:fs";
-import { readFile as readFile4 } from "node:fs/promises";
+import { readFile as readFile5 } from "node:fs/promises";
 import path20 from "node:path";
 function parseModelRef(value) {
   if (!value)
@@ -36058,7 +36143,7 @@ async function readOpenCodeConfigFile(configPath) {
   if (!configPath)
     return;
   try {
-    const content = await readFile4(configPath, "utf8");
+    const content = await readFile5(configPath, "utf8");
     return JSON.parse(stripJsonComments(content));
   } catch {
     return;
@@ -36856,6 +36941,7 @@ var OhMyOpenCodeLite = async (ctx) => {
   let councilTools;
   let cancelTaskTools;
   let codexSolTools;
+  let codexSolPromptMap;
   let setLoopGateTools;
   let setPeriodicConsultationTools;
   let acpRunTools;
@@ -36902,6 +36988,7 @@ var OhMyOpenCodeLite = async (ctx) => {
     }
     depthTracker = new SubagentDepthTracker;
     childToParent = new Map;
+    codexSolPromptMap = new Map;
     if (config.council) {
       councilManager = new CouncilManager(ctx, config, depthTracker, multiplexerEnabled);
       councilTools = createCouncilTool(ctx, councilManager);
@@ -36913,7 +37000,9 @@ var OhMyOpenCodeLite = async (ctx) => {
     acpRunTools = Object.keys(config.acpAgents ?? {}).length > 0 ? { acp_run: createAcpRunTool(config.acpAgents) } : {};
     codexSolTools = config.use_codex_for_sol_orchestrator === true ? {
       codex_sol: createCodexSolTool({
-        command: config.codex_sol_command
+        command: config.codex_sol_command,
+        reasoningEffort: "high",
+        resolvePrompt: (requestedPrompt, toolContext) => codexSolPromptMap.get(toolContext.sessionID) ?? requestedPrompt
       })
     } : {};
     webfetch = createWebfetchTool(ctx);
@@ -37357,6 +37446,7 @@ var OhMyOpenCodeLite = async (ctx) => {
         }
         if (sessionID) {
           sessionAgentMap.delete(sessionID);
+          codexSolPromptMap.delete(sessionID);
           childToParent.delete(sessionID);
           councilManager?.clearStash(sessionID);
           clearLoopState(sessionID);
@@ -37390,6 +37480,13 @@ var OhMyOpenCodeLite = async (ctx) => {
       }
       if (agent) {
         sessionAgentMap.set(input.sessionID, agent);
+        if (agent === "oracle__orchestrator-glm52-sol") {
+          const exactPrompt = (output?.parts ?? []).filter((part) => part.type === "text" && part.synthetic !== true && typeof part.text === "string").map((part) => part.text).join(`
+
+`);
+          if (exactPrompt)
+            codexSolPromptMap.set(input.sessionID, exactPrompt);
+        }
         companionManager.onSessionStatus({
           sessionId: input.sessionID,
           agent,

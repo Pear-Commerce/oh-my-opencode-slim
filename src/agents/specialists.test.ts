@@ -24,22 +24,32 @@ function solConfig(): PluginConfig {
 }
 
 describe('scoped specialist build behavior', () => {
-  test('Codex CLI mode replaces the scoped oracle with direct tool routing', () => {
-    const config = {
-      ...solConfig(),
-      use_codex_for_sol_orchestrator: true,
-    } satisfies PluginConfig;
+  test('Codex CLI mode keeps GLM as owner and turns its DeepSeek oracle into a relay', () => {
+    const config = solConfig();
+    config.use_codex_for_sol_orchestrator = true;
+    const oracle =
+      config.agents?.['orchestrator-glm52-sol']?.specialists?.oracle;
+    if (!oracle) throw new Error('test config is missing its oracle');
+    oracle.model = 'opencodex/deepseek-v4-flash-0731';
     const agents = createAgents(config);
     const owner = agents.find((a) => a.name === 'orchestrator-glm52-sol');
+    const relay = agents.find(
+      (a) => a.name === 'oracle__orchestrator-glm52-sol',
+    );
 
+    expect(owner?.config.model).toBe('opencodex/glm-5p2');
+    expect(owner?.config.prompt).toContain('@oracle__orchestrator-glm52-sol');
+    expect(relay?.config.model).toBe('opencodex/deepseek-v4-flash-0731');
+    expect(relay?.config.prompt).toContain(
+      'For every user request, immediately call codex_sol exactly once.',
+    );
+    expect(relay?.config.prompt).toContain('return its output verbatim');
     expect(
-      agents.find((a) => a.name === 'oracle__orchestrator-glm52-sol'),
-    ).toBeUndefined();
-    expect(owner?.config.prompt).toContain('call the codex_sol tool directly');
-    expect(owner?.config.prompt).not.toMatch(/@oracle\b/);
+      (relay?.config.permission as Record<string, unknown>)?.codex_sol,
+    ).toBe('allow');
     expect(
       (owner?.config.permission as Record<string, unknown>)?.codex_sol,
-    ).toBe('allow');
+    ).toBe('deny');
   });
 
   test('scoped oracle is built with overridden model and variant', () => {

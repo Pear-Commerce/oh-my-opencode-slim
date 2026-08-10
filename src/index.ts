@@ -179,6 +179,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
   let councilTools: Record<string, unknown>;
   let cancelTaskTools: Record<string, unknown>;
   let codexSolTools: Record<string, unknown>;
+  let codexSolPromptMap: Map<string, string>;
   let setLoopGateTools: Record<string, unknown>;
   let setPeriodicConsultationTools: Record<string, unknown>;
   let acpRunTools: Record<string, ReturnType<typeof createAcpRunTool>>;
@@ -259,6 +260,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
     depthTracker = new SubagentDepthTracker();
     childToParent = new Map<string, string>();
+    codexSolPromptMap = new Map<string, string>();
 
     // Initialize council tools (only when council is configured)
     if (config.council) {
@@ -287,6 +289,9 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         ? {
             codex_sol: createCodexSolTool({
               command: config.codex_sol_command,
+              reasoningEffort: 'high',
+              resolvePrompt: (requestedPrompt, toolContext) =>
+                codexSolPromptMap.get(toolContext.sessionID) ?? requestedPrompt,
             }),
           }
         : {};
@@ -1065,6 +1070,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         }
         if (sessionID) {
           sessionAgentMap.delete(sessionID);
+          codexSolPromptMap.delete(sessionID);
           childToParent.delete(sessionID);
           // Clear any stashed council results for this session to avoid
           // stale entries lingering after the session is gone.
@@ -1178,7 +1184,10 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     // injection)
     'chat.message': async (
       input: { sessionID: string; agent?: string },
-      output?: { message?: { agent?: string } },
+      output?: {
+        message?: { agent?: string };
+        parts?: Array<{ type?: string; text?: string; synthetic?: boolean }>;
+      },
     ) => {
       const rawAgent = input.agent ?? output?.message?.agent;
       const agent = rawAgent
@@ -1195,6 +1204,18 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
       if (agent) {
         sessionAgentMap.set(input.sessionID, agent);
+        if (agent === 'oracle__orchestrator-glm52-sol') {
+          const exactPrompt = (output?.parts ?? [])
+            .filter(
+              (part) =>
+                part.type === 'text' &&
+                part.synthetic !== true &&
+                typeof part.text === 'string',
+            )
+            .map((part) => part.text)
+            .join('\n\n');
+          if (exactPrompt) codexSolPromptMap.set(input.sessionID, exactPrompt);
+        }
         // A chat message means this session is actively working. This also
         // covers the race where session.status busy fires before the
         // session's agent is known.

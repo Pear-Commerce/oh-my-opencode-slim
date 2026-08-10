@@ -13,7 +13,7 @@
       "type": "boolean"
     },
     "use_codex_for_sol_orchestrator": {
-      "description": "Route the orchestrator-glm52-sol oracle lane through the local Codex CLI instead of an OpenCode subagent.",
+      "description": "Route orchestrator-glm52-sol through a scoped DeepSeek oracle subagent that relays each delegation into a persistent local Codex CLI conversation.",
       "type": "boolean"
     },
     "codex_sol_command": {
