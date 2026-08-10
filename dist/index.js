@@ -18828,6 +18828,7 @@ var PluginConfigSchema = z2.object({
   setDefaultAgent: z2.boolean().optional(),
   autoUpdate: z2.boolean().optional().describe("Disable automatic installation of plugin updates when false. Defaults to true."),
   use_codex_for_sol_orchestrator: z2.boolean().optional().describe("Route the orchestrator-glm52-sol oracle lane through the local Codex CLI instead of an OpenCode subagent."),
+  codex_sol_command: z2.string().min(1).optional().describe("Absolute path or command used to launch the Codex CLI for Sol orchestration. An absolute path is recommended for GUI hosts with a minimal PATH."),
   presets: z2.record(z2.string(), PresetSchema).optional(),
   agents: z2.record(z2.string(), AgentOverrideConfigSchema).optional(),
   disabled_agents: z2.array(z2.string()).optional().describe("Agent names to disable completely. " + "Disabled agents are not instantiated and cannot be delegated to. " + "Orchestrator and council internal agents (councillor) cannot be disabled. " + "By default, 'observer' is disabled. Remove it from this list and configure a vision-capable model to enable."),
@@ -33939,6 +33940,7 @@ function createCodexSolTool(options) {
         throw new Error(`codex_sol can only be used by ${CODEX_SOL_ORCHESTRATOR2}`);
       }
       return runner(args.prompt, {
+        command: options?.command,
         cwd: ctx.directory,
         model: options?.model ?? DEFAULT_MODEL,
         signal: ctx.abort
@@ -36909,7 +36911,11 @@ var OhMyOpenCodeLite = async (ctx) => {
     }
     mcps = createBuiltinMcps(config.disabled_mcps, config.websearch);
     acpRunTools = Object.keys(config.acpAgents ?? {}).length > 0 ? { acp_run: createAcpRunTool(config.acpAgents) } : {};
-    codexSolTools = config.use_codex_for_sol_orchestrator === true ? { codex_sol: createCodexSolTool() } : {};
+    codexSolTools = config.use_codex_for_sol_orchestrator === true ? {
+      codex_sol: createCodexSolTool({
+        command: config.codex_sol_command
+      })
+    } : {};
     webfetch = createWebfetchTool(ctx);
     backgroundJobBoard = new BackgroundJobBoard({
       maxReusablePerAgent: config.backgroundJobs?.maxSessionsPerAgent ?? 2,

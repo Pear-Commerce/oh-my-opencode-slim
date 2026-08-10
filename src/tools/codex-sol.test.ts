@@ -18,7 +18,8 @@ function context(agent = 'orchestrator-glm52-sol'): ToolContext {
 describe('codex_sol tool', () => {
   test('passes the exact prompt and session directory to Codex', async () => {
     const runner = mock(async () => 'Codex answer');
-    const codexSol = createCodexSolTool({ runner });
+    const command = '/Applications/ChatGPT.app/Contents/Resources/codex';
+    const codexSol = createCodexSolTool({ command, runner });
     const prompt = 'Review src/index.ts and report the concrete risks.';
 
     const result = await codexSol.execute({ prompt }, context());
@@ -27,6 +28,7 @@ describe('codex_sol tool', () => {
     expect(runner).toHaveBeenCalledTimes(1);
     expect(runner.mock.calls[0]?.[0]).toBe(prompt);
     expect(runner.mock.calls[0]?.[1]).toMatchObject({
+      command,
       cwd: '/workspace/project',
       model: 'gpt-5.6-sol',
     });

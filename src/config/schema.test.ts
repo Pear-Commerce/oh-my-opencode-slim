@@ -17,6 +17,20 @@ describe('use_codex_for_sol_orchestrator', () => {
   });
 });
 
+describe('codex_sol_command', () => {
+  test('accepts an absolute Codex CLI path', () => {
+    expect(
+      PluginConfigSchema.parse({
+        codex_sol_command: '/Applications/ChatGPT.app/Contents/Resources/codex',
+      }).codex_sol_command,
+    ).toBe('/Applications/ChatGPT.app/Contents/Resources/codex');
+  });
+
+  test('rejects an empty command', () => {
+    expect(() => PluginConfigSchema.parse({ codex_sol_command: '' })).toThrow();
+  });
+});
+
 describe('SpecialistNameSchema', () => {
   test('accepts the six specialist names', () => {
     for (const name of [

@@ -411,6 +411,13 @@ export const PluginConfigSchema = z
       .describe(
         'Route the orchestrator-glm52-sol oracle lane through the local Codex CLI instead of an OpenCode subagent.',
       ),
+    codex_sol_command: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        'Absolute path or command used to launch the Codex CLI for Sol orchestration. An absolute path is recommended for GUI hosts with a minimal PATH.',
+      ),
     presets: z.record(z.string(), PresetSchema).optional(),
     agents: z.record(z.string(), AgentOverrideConfigSchema).optional(),
     disabled_agents: z

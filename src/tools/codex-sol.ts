@@ -95,6 +95,7 @@ export async function runCodexSol(
 }
 
 export function createCodexSolTool(options?: {
+  command?: string;
   model?: string;
   runner?: CodexSolRunner;
 }): ToolDefinition {
@@ -115,6 +116,7 @@ export function createCodexSolTool(options?: {
         );
       }
       return runner(args.prompt, {
+        command: options?.command,
         cwd: ctx.directory,
         model: options?.model ?? DEFAULT_MODEL,
         signal: ctx.abort,

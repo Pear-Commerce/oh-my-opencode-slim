@@ -16,6 +16,11 @@
       "description": "Route the orchestrator-glm52-sol oracle lane through the local Codex CLI instead of an OpenCode subagent.",
       "type": "boolean"
     },
+    "codex_sol_command": {
+      "description": "Absolute path or command used to launch the Codex CLI for Sol orchestration. An absolute path is recommended for GUI hosts with a minimal PATH.",
+      "type": "string",
+      "minLength": 1
+    },
     "presets": {
       "type": "object",
       "propertyNames": {

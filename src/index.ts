@@ -284,7 +284,11 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         : {};
     codexSolTools =
       config.use_codex_for_sol_orchestrator === true
-        ? { codex_sol: createCodexSolTool() }
+        ? {
+            codex_sol: createCodexSolTool({
+              command: config.codex_sol_command,
+            }),
+          }
         : {};
     webfetch = createWebfetchTool(ctx);
     backgroundJobBoard = new BackgroundJobBoard({
