@@ -20121,18 +20121,24 @@ function injectScopedSpecialistNames(orchestrator, remap, displayNameMap) {
   orchestrator.config.prompt = prompt;
 }
 function applyDefaultPermissions(agent, configuredSkills, config, skillAgentName) {
+  if (config?.use_codex_for_sol_orchestrator === true && agent.name === CODEX_SOL_RELAY_AGENT) {
+    agent.config.permission = {
+      "*": "deny",
+      codex_sol: "allow"
+    };
+    return;
+  }
   const existing = agent.config.permission ?? {};
   const skillPermissions = getSkillPermissionsForAgent(skillAgentName ?? agent.name, configuredSkills);
   const questionPerm = existing.question === "deny" ? "deny" : "allow";
   const councilSessionPerm = COUNCIL_TOOL_ALLOWED_AGENTS.has(agent.name) ? existing.council_session ?? "allow" : "deny";
   const cancelTaskPerm = isOrchestratorClassAgent(config, agent.name) ? existing.cancel_task ?? "allow" : "deny";
-  const codexSolPerm = config?.use_codex_for_sol_orchestrator === true && agent.name === CODEX_SOL_RELAY_AGENT ? "allow" : "deny";
   agent.config.permission = {
     ...existing,
     question: questionPerm,
     council_session: councilSessionPerm,
     cancel_task: cancelTaskPerm,
-    codex_sol: codexSolPerm,
+    codex_sol: "deny",
     skill: {
       ...typeof existing.skill === "object" ? existing.skill : {},
       ...skillPermissions

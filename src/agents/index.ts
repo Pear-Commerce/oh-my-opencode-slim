@@ -265,6 +265,17 @@ function applyDefaultPermissions(
   config?: PluginConfig,
   skillAgentName?: string,
 ): void {
+  if (
+    config?.use_codex_for_sol_orchestrator === true &&
+    agent.name === CODEX_SOL_RELAY_AGENT
+  ) {
+    agent.config.permission = {
+      '*': 'deny',
+      codex_sol: 'allow',
+    } as SDKAgentConfig['permission'];
+    return;
+  }
+
   const existing = (agent.config.permission ?? {}) as Record<
     string,
     'ask' | 'allow' | 'deny' | Record<string, 'ask' | 'allow' | 'deny'>
@@ -287,18 +298,12 @@ function applyDefaultPermissions(
   const cancelTaskPerm = isOrchestratorClassAgent(config, agent.name)
     ? (existing.cancel_task ?? 'allow')
     : 'deny';
-  const codexSolPerm =
-    config?.use_codex_for_sol_orchestrator === true &&
-    agent.name === CODEX_SOL_RELAY_AGENT
-      ? 'allow'
-      : 'deny';
-
   agent.config.permission = {
     ...existing,
     question: questionPerm,
     council_session: councilSessionPerm,
     cancel_task: cancelTaskPerm,
-    codex_sol: codexSolPerm,
+    codex_sol: 'deny',
     // Apply skill permissions as nested object under 'skill' key
     skill: {
       ...(typeof existing.skill === 'object' ? existing.skill : {}),

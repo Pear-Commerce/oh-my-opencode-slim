@@ -41,9 +41,19 @@ describe('scoped specialist build behavior', () => {
       'For every user request, immediately call codex_sol exactly once.',
     );
     expect(relay?.config.prompt).toContain('return its output verbatim');
+    const relayPermissions = relay?.config.permission as Record<
+      string,
+      unknown
+    >;
+    expect(relayPermissions).toEqual({
+      '*': 'deny',
+      codex_sol: 'allow',
+    });
     expect(
-      (relay?.config.permission as Record<string, unknown>)?.codex_sol,
-    ).toBe('allow');
+      Object.entries(relayPermissions)
+        .filter(([, permission]) => permission === 'allow')
+        .map(([tool]) => tool),
+    ).toEqual(['codex_sol']);
     expect(
       (owner?.config.permission as Record<string, unknown>)?.codex_sol,
     ).toBe('deny');
