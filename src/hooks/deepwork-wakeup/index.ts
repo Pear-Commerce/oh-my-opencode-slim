@@ -180,10 +180,10 @@ const EVENT_WAKEUP_MESSAGE =
   'Background work is ready to reconcile. Review the Background Job Board and continue: reconcile terminal results, validate, and proceed to the next phase or finish if all work is complete.';
 
 const DONE_CHECK_MESSAGE =
-  'Are you at a natural stopping point — all work complete or explicitly deferred? If background work is still running, answer yes (you are correctly waiting). Respond with one word: yes or no.';
+  'Is every task in the current deepwork scope complete? Deferred, postponed, skipped, or otherwise unfinished work is not complete: answer no so you can continue it now. Respond with one word: yes or no.';
 
 const CONTINUE_MESSAGE =
-  'Continue your deepwork. If you were waiting on background work, check the Background Job Board — it may have completed. Otherwise pick up the next unfinished task and proceed.';
+  'Continue your deepwork now. Resume deferred, postponed, skipped, or otherwise unfinished work; pick the next actionable task and proceed. If background work completed, reconcile it first.';
 
 const GATE_FAIL_MESSAGE =
   'The convergence gate failed. Review the gate output above, fix the issues, and continue.';

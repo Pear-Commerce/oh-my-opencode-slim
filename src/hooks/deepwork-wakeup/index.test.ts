@@ -478,9 +478,10 @@ describe('deepwork-wakeup hook', () => {
 
     // First promptAsync should be the done-check question
     expect(promptAsync).toHaveBeenCalledTimes(1);
-    expect(promptAsync.mock.calls[0]?.[0].body.parts[0].text).toContain(
-      'yes or no',
-    );
+    const doneCheck = promptAsync.mock.calls[0]?.[0].body.parts[0].text;
+    expect(doneCheck).toContain('yes or no');
+    expect(doneCheck).toContain('Deferred');
+    expect(doneCheck).toContain('not complete');
 
     // Simulate: orchestrator becomes busy (processing the question)
     await hook.event(busyEvent('ses_orch'));
@@ -493,9 +494,10 @@ describe('deepwork-wakeup hook', () => {
     // on the first idle, and once by handleDoneCheckResponse
     expect(messages).toHaveBeenCalledTimes(2);
     expect(promptAsync).toHaveBeenCalledTimes(2);
-    expect(promptAsync.mock.calls[1]?.[0].body.parts[0].text).toContain(
-      'Continue',
-    );
+    const continuePrompt =
+      promptAsync.mock.calls[1]?.[0].body.parts[0].text;
+    expect(continuePrompt).toContain('Continue');
+    expect(continuePrompt).toContain('Resume deferred');
 
     hook._destroy();
   });
