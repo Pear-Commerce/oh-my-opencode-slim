@@ -97,6 +97,10 @@ Start it directly with:
 /deepwork <heavy coding task>
 ```
 
+For an existing session, explicit natural-language requests such as `reactivate
+deepwork`, `resume deepwork`, and `continue deepwork` reactivate the continuation
+loop. Incidental mentions of deepwork do not.
+
 **How it works:**
 1. Orchestrator creates a session artifact at `.slim/deepwork/<task>.md`
 2. Draft plan → Oracle review → Revise until acceptable

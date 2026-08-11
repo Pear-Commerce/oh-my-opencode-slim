@@ -36,6 +36,7 @@ import {
   createReflectCommandHook,
   createTaskSessionManagerHook,
   ForegroundFallbackManager,
+  isDeepworkActivationRequest,
 } from './hooks';
 import type { MessageWithParts } from './hooks/types';
 import { processFileAttachments } from './hooks/upload-hook';
@@ -1204,6 +1205,21 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
       if (agent) {
         sessionAgentMap.set(input.sessionID, agent);
+        const userText = (output?.parts ?? [])
+          .filter(
+            (part) =>
+              part.type === 'text' &&
+              part.synthetic !== true &&
+              typeof part.text === 'string',
+          )
+          .map((part) => part.text)
+          .join('\n');
+        if (
+          isOrchestratorClassAgent(config, agent) &&
+          isDeepworkActivationRequest(userText)
+        ) {
+          deepworkWakeupHook.activateSession(input.sessionID);
+        }
         if (agent === 'oracle__orchestrator-glm52-sol') {
           const exactPrompt = (output?.parts ?? [])
             .filter(

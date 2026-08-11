@@ -216,6 +216,9 @@ Start it with:
 /deepwork <heavy coding task>
 ```
 
+To resume continuation for an existing session, explicitly say `reactivate
+deepwork`, `resume deepwork`, or `continue deepwork` in that session.
+
 See **[Skills](docs/skills.md#deepwork)** for when to use it and how the workflow
 runs.
 

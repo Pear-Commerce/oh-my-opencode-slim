@@ -1,8 +1,26 @@
 import { describe, expect, test } from 'bun:test';
 import { SLIM_INTERNAL_INITIATOR_MARKER } from '../../utils';
-import { createDeepworkCommandHook } from './index';
+import {
+  createDeepworkCommandHook,
+  isDeepworkActivationRequest,
+} from './index';
 
 describe('deepwork command hook', () => {
+  test('recognizes explicit natural-language activation requests', () => {
+    expect(isDeepworkActivationRequest('reactivate deepwork...')).toBe(true);
+    expect(isDeepworkActivationRequest('Please resume deepwork now')).toBe(
+      true,
+    );
+    expect(isDeepworkActivationRequest('continue deepwork')).toBe(true);
+  });
+
+  test('does not activate for incidental deepwork mentions', () => {
+    expect(isDeepworkActivationRequest('How does deepwork work?')).toBe(false);
+    expect(isDeepworkActivationRequest('Summarize the deepwork changes')).toBe(
+      false,
+    );
+  });
+
   test('registers /deepwork command when absent', () => {
     const hook = createDeepworkCommandHook();
     const config: Record<string, unknown> = {};

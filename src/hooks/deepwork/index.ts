@@ -2,6 +2,10 @@ import { createInternalAgentTextPart } from '../../utils';
 
 const COMMAND_NAME = 'deepwork';
 
+export function isDeepworkActivationRequest(text: string): boolean {
+  return /\b(?:activate|reactivate|resume|continue)\s+deepwork\b/i.test(text);
+}
+
 function activationPrompt(task: string): string {
   return [
     'Use the deepwork skill for this task. Treat it as a heavy coding session.',

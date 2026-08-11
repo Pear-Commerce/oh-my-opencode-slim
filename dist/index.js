@@ -24331,6 +24331,9 @@ ${verbatimSection}`;
 }
 // src/hooks/deepwork/index.ts
 var COMMAND_NAME = "deepwork";
+function isDeepworkActivationRequest(text) {
+  return /\b(?:activate|reactivate|resume|continue)\s+deepwork\b/i.test(text);
+}
 function activationPrompt(task2) {
   return [
     "Use the deepwork skill for this task. Treat it as a heavy coding session.",
@@ -37534,6 +37537,11 @@ var OhMyOpenCodeLite = async (ctx) => {
       }
       if (agent) {
         sessionAgentMap.set(input.sessionID, agent);
+        const userText = (output?.parts ?? []).filter((part) => part.type === "text" && part.synthetic !== true && typeof part.text === "string").map((part) => part.text).join(`
+`);
+        if (isOrchestratorClassAgent(config, agent) && isDeepworkActivationRequest(userText)) {
+          deepworkWakeupHook.activateSession(input.sessionID);
+        }
         if (agent === "oracle__orchestrator-glm52-sol") {
           const exactPrompt = (output?.parts ?? []).filter((part) => part.type === "text" && part.synthetic !== true && typeof part.text === "string").map((part) => part.text).join(`
 

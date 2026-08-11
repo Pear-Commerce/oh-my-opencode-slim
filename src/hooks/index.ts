@@ -3,7 +3,10 @@ export type { AutoUpdateCheckerOptions } from './auto-update-checker';
 export { createAutoUpdateCheckerHook } from './auto-update-checker';
 export { createChatHeadersHook } from './chat-headers';
 export { createCouncilDetailsHook } from './council-details';
-export { createDeepworkCommandHook } from './deepwork';
+export {
+  createDeepworkCommandHook,
+  isDeepworkActivationRequest,
+} from './deepwork';
 export { createDeepworkWakeupHook } from './deepwork-wakeup';
 export { createDelegateTaskRetryHook } from './delegate-task-retry/hook';
 export { createFilterAvailableSkillsHook } from './filter-available-skills';

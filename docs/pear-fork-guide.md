@@ -568,7 +568,9 @@ changelog first.
   `bun run build`, or you built but didn't restart OpenCode. Both are required.
 - **Orchestrator isn't waking up in a deepwork loop** — confirm the session's
   agent is orchestrator-class (built-in `orchestrator` or a custom agent with
-  `orchestrator_class: true`). The wakeup hook only manages those. The
+  `orchestrator_class: true`) and activate continuation with `/deepwork <task>`
+  or an explicit `reactivate deepwork`, `resume deepwork`, or `continue
+  deepwork` message. The wakeup hook only manages active deepwork sessions. The
   periodic done-check is intentionally disabled; event-driven wakes (on
   background completion) and gates still work.
 - **Gate keeps re-firing** — that's expected on FAIL. There's a 2-minute
