@@ -54,6 +54,8 @@ interface DiffMeasurement {
   productionFiles: number;
   productionLines: number;
   changedFiles: Array<{ file: string; added: number; deleted: number }>;
+  /** Directory where the diff was measured (may be a worktree, not the session dir). */
+  sourceDir: string;
 }
 
 export interface FixerReviewOptions {
@@ -86,11 +88,11 @@ export function createFixerReviewHook(
 
   const capturedCalls = new Map<string, CapturedFixerCall>();
 
-  function measureDiff(): DiffMeasurement | null {
+  function measureDiffInDir(dir: string): DiffMeasurement | null {
     try {
       // Tracked file changes vs HEAD (modifications, deletions, staged adds)
       const trackedOutput = execSync('git diff --numstat HEAD', {
-        cwd: directory,
+        cwd: dir,
         encoding: 'utf-8',
         timeout: 5_000,
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -100,7 +102,7 @@ export function createFixerReviewHook(
       const untrackedOutput = execSync(
         'git ls-files --others --exclude-standard',
         {
-          cwd: directory,
+          cwd: dir,
           encoding: 'utf-8',
           timeout: 5_000,
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -135,7 +137,7 @@ export function createFixerReviewHook(
         const isTestOrDoc = TEST_OR_DOC_PATTERN.test(file);
         let lineCount = 0;
         try {
-          const content = readFileSync(join(directory, file), 'utf-8');
+          const content = readFileSync(join(dir, file), 'utf-8');
           lineCount = content.split('\n').length - 1; // don't count trailing newline
           if (lineCount < 0) lineCount = 0;
         } catch {
@@ -156,13 +158,61 @@ export function createFixerReviewHook(
         productionFiles,
         productionLines,
         changedFiles,
+        sourceDir: dir,
       };
     } catch (err) {
       log('[fixer-review] git diff failed', {
+        dir,
         error: err instanceof Error ? err.message : String(err),
       });
       return null;
     }
+  }
+
+  function measureDiff(): DiffMeasurement | null {
+    // First, try measuring in the session directory itself
+    const sessionDiff = measureDiffInDir(directory);
+    if (sessionDiff && sessionDiff.productionLines > 0) return sessionDiff;
+
+    // If no production changes in the session directory, check git worktrees.
+    // Fixers often write to a worktree (e.g., /path/repo-step9-rearch) while
+    // the orchestrator session runs in the main repo checkout. We need to
+    // measure the diff in the worktree, not the session cwd.
+    try {
+      const worktreeOutput = execSync('git worktree list --porcelain', {
+        cwd: directory,
+        encoding: 'utf-8',
+        timeout: 5_000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+
+      const worktrees: string[] = [];
+      for (const line of worktreeOutput.split('\n')) {
+        if (line.startsWith('worktree ')) {
+          const wt = line.slice('worktree '.length).trim();
+          if (wt && wt !== directory) worktrees.push(wt);
+        }
+      }
+
+      // Measure diff in each worktree; return the first one with production changes
+      for (const wt of worktrees) {
+        const wtDiff = measureDiffInDir(wt);
+        if (wtDiff && wtDiff.productionLines > 0) {
+          log('[fixer-review] measured diff in worktree instead of session dir', {
+            sessionDir: directory,
+            worktreeDir: wt,
+            productionLines: wtDiff.productionLines,
+            productionFiles: wtDiff.productionFiles,
+          });
+          return wtDiff;
+        }
+      }
+    } catch {
+      // Not a git worktree repo or git worktree command failed — ignore
+    }
+
+    // Fall back to session diff even if it had no production lines (might have test-only changes)
+    return sessionDiff;
   }
 
   function isNonTrivial(diff: DiffMeasurement): boolean {
@@ -228,6 +278,7 @@ export function createFixerReviewHook(
     }
 
     const promptText = buildOraclePrompt(diff, fixerDescription, fixerPrompt);
+    const reviewDir = diff.sourceDir || directory;
     let oracleSessionId: string | undefined;
 
     try {
@@ -236,7 +287,7 @@ export function createFixerReviewHook(
           parentID: parentSessionID,
           title: 'Auto oracle review of fixer change',
         },
-        query: { directory },
+        query: { directory: reviewDir },
       });
 
       const sid = (session as { data?: { id?: string } }).data?.id;
@@ -258,13 +309,13 @@ export function createFixerReviewHook(
         {
           path: { id: sid },
           body,
-          query: { directory },
+          query: { directory: reviewDir },
         },
         oracleTimeoutMs,
       );
 
       const extraction = await extractSessionResult(client, sid, {
-        directory,
+        directory: reviewDir,
         includeReasoning: false,
       });
 

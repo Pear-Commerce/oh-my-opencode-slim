@@ -25882,16 +25882,16 @@ function createFixerReviewHook(client, options) {
     enabled = true
   } = options;
   const capturedCalls = new Map;
-  function measureDiff() {
+  function measureDiffInDir(dir) {
     try {
       const trackedOutput = execSync2("git diff --numstat HEAD", {
-        cwd: directory,
+        cwd: dir,
         encoding: "utf-8",
         timeout: 5000,
         stdio: ["pipe", "pipe", "pipe"]
       }).trim();
       const untrackedOutput = execSync2("git ls-files --others --exclude-standard", {
-        cwd: directory,
+        cwd: dir,
         encoding: "utf-8",
         timeout: 5000,
         stdio: ["pipe", "pipe", "pipe"]
@@ -25921,7 +25921,7 @@ function createFixerReviewHook(client, options) {
         const isTestOrDoc = TEST_OR_DOC_PATTERN.test(file);
         let lineCount = 0;
         try {
-          const content = readFileSync8(join12(directory, file), "utf-8");
+          const content = readFileSync8(join12(dir, file), "utf-8");
           lineCount = content.split(`
 `).length - 1;
           if (lineCount < 0)
@@ -25939,14 +25939,51 @@ function createFixerReviewHook(client, options) {
         totalFiles: changedFiles.length,
         productionFiles,
         productionLines,
-        changedFiles
+        changedFiles,
+        sourceDir: dir
       };
     } catch (err) {
       log("[fixer-review] git diff failed", {
+        dir,
         error: err instanceof Error ? err.message : String(err)
       });
       return null;
     }
+  }
+  function measureDiff() {
+    const sessionDiff = measureDiffInDir(directory);
+    if (sessionDiff && sessionDiff.productionLines > 0)
+      return sessionDiff;
+    try {
+      const worktreeOutput = execSync2("git worktree list --porcelain", {
+        cwd: directory,
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["pipe", "pipe", "pipe"]
+      }).trim();
+      const worktrees = [];
+      for (const line of worktreeOutput.split(`
+`)) {
+        if (line.startsWith("worktree ")) {
+          const wt = line.slice("worktree ".length).trim();
+          if (wt && wt !== directory)
+            worktrees.push(wt);
+        }
+      }
+      for (const wt of worktrees) {
+        const wtDiff = measureDiffInDir(wt);
+        if (wtDiff && wtDiff.productionLines > 0) {
+          log("[fixer-review] measured diff in worktree instead of session dir", {
+            sessionDir: directory,
+            worktreeDir: wt,
+            productionLines: wtDiff.productionLines,
+            productionFiles: wtDiff.productionFiles
+          });
+          return wtDiff;
+        }
+      }
+    } catch {}
+    return sessionDiff;
   }
   function isNonTrivial(diff) {
     return diff.productionLines >= minProductionLines || diff.productionFiles >= minProductionFiles;
@@ -25990,6 +26027,7 @@ function createFixerReviewHook(client, options) {
       return;
     }
     const promptText = buildOraclePrompt(diff, fixerDescription, fixerPrompt);
+    const reviewDir = diff.sourceDir || directory;
     let oracleSessionId;
     try {
       const session2 = await client.session.create({
@@ -25997,7 +26035,7 @@ function createFixerReviewHook(client, options) {
           parentID: parentSessionID,
           title: "Auto oracle review of fixer change"
         },
-        query: { directory }
+        query: { directory: reviewDir }
       });
       const sid = session2.data?.id;
       if (!sid) {
@@ -26014,10 +26052,10 @@ function createFixerReviewHook(client, options) {
       await promptWithTimeout(client, {
         path: { id: sid },
         body,
-        query: { directory }
+        query: { directory: reviewDir }
       }, oracleTimeoutMs);
       const extraction = await extractSessionResult(client, sid, {
-        directory,
+        directory: reviewDir,
         includeReasoning: false
       });
       if (extraction.empty) {
