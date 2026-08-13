@@ -69,6 +69,7 @@ for f in opencode.jsonc.template oh-my-opencode-slim.json tui.json; do
 done
 
 OPENCODE_DIR="$HOME/.config/opencode"
+DEVREV_TOKEN_PATH="$OPENCODE_DIR/devrev.token"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 
 echo "Repo:       $REPO_DIR"
@@ -113,6 +114,15 @@ else
   echo "      but install OpenCode (https://opencode.ai) before using it." >&2
 fi
 
+if [ "$DRY_RUN" = false ]; then
+  mkdir -p "$OPENCODE_DIR"
+  if [ ! -f "$DEVREV_TOKEN_PATH" ]; then
+    echo "ERROR: DevRev token not found at $DEVREV_TOKEN_PATH" >&2
+    echo "       Add the token once, then rerun install.sh." >&2
+    exit 1
+  fi
+fi
+
 # --- Build -------------------------------------------------------------------
 echo "==> Building plugin (bun install && bun run build)"
 if [ "$DRY_RUN" = true ]; then
@@ -128,8 +138,6 @@ fi
 echo
 
 # --- Install config files ----------------------------------------------------
-mkdir -p "$OPENCODE_DIR"
-
 backup_if_exists() {
   local dest="$1"
   if [ -f "$dest" ]; then
@@ -146,13 +154,22 @@ install_copy() {
   [ "$DRY_RUN" = true ] || cp -p "$src" "$dest"
 }
 
+escape_json_sed_replacement() {
+  printf '%s' "$1" | sed -e 's/[\"]/\\&/g' -e 's/[&|\]/\\&/g'
+}
+
 # opencode.jsonc is GENERATED from the template with the plugin path substituted.
 TEMPLATE="$CONFIG_SRC/opencode.jsonc.template"
 TARGET="$OPENCODE_DIR/opencode.jsonc"
 backup_if_exists "$TARGET"
 echo "==> Generating opencode.jsonc (plugin path: $PLUGIN_PATH)"
 if [ "$DRY_RUN" = false ]; then
-  sed "s|__OMO_PLUGIN_PATH__|$PLUGIN_PATH|g" "$TEMPLATE" > "$TARGET"
+  PLUGIN_PATH_REPLACEMENT="$(escape_json_sed_replacement "$PLUGIN_PATH")"
+  DEVREV_TOKEN_PATH_REPLACEMENT="$(escape_json_sed_replacement "$DEVREV_TOKEN_PATH")"
+  sed \
+    -e "s|__OMO_PLUGIN_PATH__|$PLUGIN_PATH_REPLACEMENT|g" \
+    -e "s|__DEVREV_TOKEN_PATH__|$DEVREV_TOKEN_PATH_REPLACEMENT|g" \
+    "$TEMPLATE" > "$TARGET"
 fi
 
 # The other two are copied verbatim (portable, no per-user values).
