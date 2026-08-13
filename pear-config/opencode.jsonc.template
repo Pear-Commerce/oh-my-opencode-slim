@@ -82,6 +82,18 @@
       "disable": false
     }
   },
+  "mcp": {
+    "devrev": {
+      "type": "remote",
+      "url": "https://api.devrev.ai/mcp/v1",
+      "enabled": true,
+      "timeout": 30000,
+      "oauth": false,
+      "headers": {
+        "Authorization": "Bearer {file:__DEVREV_TOKEN_PATH__}"
+      }
+    }
+  },
   "lsp": true,
   "permission": "allow"
 }
