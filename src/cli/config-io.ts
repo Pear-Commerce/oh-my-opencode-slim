@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { crossSpawn } from '../utils/compat';
 import {
   ensureConfigDir,
@@ -110,10 +111,21 @@ function isPackageManagerInstall(path: string): boolean {
 }
 
 function isPluginEntry(entry: string): boolean {
+  if (entry.startsWith('file://')) {
+    try {
+      const localPath = fileURLToPath(entry);
+      return (
+        isLocalPackageRootEntry(localPath) ||
+        findPackageRoot(localPath) !== null
+      );
+    } catch {
+      return false;
+    }
+  }
+
   return (
     entry === PACKAGE_NAME ||
     entry.startsWith(`${PACKAGE_NAME}@`) ||
-    (entry.startsWith('file://') && entry.includes(PACKAGE_NAME)) ||
     isLocalPackageRootEntry(entry)
   );
 }
@@ -137,7 +149,7 @@ function getPluginEntry(): string {
       return PACKAGE_NAME;
     }
 
-    return packageRoot;
+    return pathToFileURL(join(packageRoot, 'dist', 'index.js')).href;
   } catch {
     return PACKAGE_NAME;
   }

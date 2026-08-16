@@ -30,7 +30,7 @@ The CLI is intentionally non-interactive-only now; it prints usage and steps to 
 ### Module decomposition
 
 - `paths.ts`: config directory and file discovery (`opencode.json`/`.jsonc`, lite config path).
-- `config-io.ts`: JSON/JSONC parsing, normalize write behavior, atomic writes (`.tmp` + `.bak`), plugin registration, default-agent disabling.
+- `config-io.ts`: JSON/JSONC parsing, normalize write behavior, atomic writes (`.tmp` + `.bak`), plugin registration (including `file://` URLs for local builds), default-agent disabling.
 - `providers.ts`: provider model mapping + `generateLiteConfig()`.
 - `system.ts`: OpenCode binary/version/path checks.
 - `skills.ts`: bundled and permission-only skill permission defaults.

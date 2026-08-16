@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   addPluginToOpenCodeConfig,
   addPluginToOpenCodeTuiConfig,
@@ -181,9 +182,9 @@ describe('config-io', () => {
     expect(saved.plugin).toEqual(['oh-my-opencode-slim']);
   });
 
-  test('addPluginToOpenCodeConfig stores local repo path for local dev paths', async () => {
+  test('addPluginToOpenCodeConfig stores local entry URL for local dev paths', async () => {
     const configPath = join(tmpDir, 'opencode', 'opencode.json');
-    const packageRoot = join(tmpDir, 'repo');
+    const packageRoot = join(tmpDir, 'repo with spaces');
     const localCliPath = join(packageRoot, 'dist', 'cli', 'index.js');
     paths.ensureConfigDir();
     writeFileSync(configPath, JSON.stringify({ plugin: [] }));
@@ -194,10 +195,12 @@ describe('config-io', () => {
 
     expect(result.success).toBe(true);
     const saved = JSON.parse(readFileSync(configPath, 'utf-8'));
-    expect(saved.plugin).toEqual([packageRoot]);
+    expect(saved.plugin).toEqual([
+      pathToFileURL(join(packageRoot, 'dist', 'index.js')).href,
+    ]);
   });
 
-  test('addPluginToOpenCodeConfig stores local repo path for local paths containing bunx-', async () => {
+  test('addPluginToOpenCodeConfig stores local entry URL for local paths containing bunx-', async () => {
     const configPath = join(tmpDir, 'opencode', 'opencode.json');
     const packageRoot = join(tmpDir, 'repo', 'bunx-tools');
     const localCliPath = join(packageRoot, 'dist', 'cli', 'index.js');
@@ -210,7 +213,9 @@ describe('config-io', () => {
 
     expect(result.success).toBe(true);
     const saved = JSON.parse(readFileSync(configPath, 'utf-8'));
-    expect(saved.plugin).toEqual([packageRoot]);
+    expect(saved.plugin).toEqual([
+      pathToFileURL(join(packageRoot, 'dist', 'index.js')).href,
+    ]);
   });
 
   test('addPluginToOpenCodeConfig deduplicates existing local repo path entries', async () => {
@@ -229,7 +234,10 @@ describe('config-io', () => {
 
     expect(result.success).toBe(true);
     const saved = JSON.parse(readFileSync(configPath, 'utf-8'));
-    expect(saved.plugin).toEqual(['other', packageRoot]);
+    expect(saved.plugin).toEqual([
+      'other',
+      pathToFileURL(join(packageRoot, 'dist', 'index.js')).href,
+    ]);
   });
 
   test('addPluginToOpenCodeConfig preserves non-string plugin entries when refreshing', async () => {
@@ -362,7 +370,7 @@ describe('config-io', () => {
     expect(original.plugin).toEqual(['default']);
   });
 
-  test('addPluginToOpenCodeTuiConfig stores local repo path for local dev paths', async () => {
+  test('addPluginToOpenCodeTuiConfig stores local entry URL for local dev paths', async () => {
     const tuiPath = join(tmpDir, 'opencode', 'tui.json');
     const packageRoot = join(tmpDir, 'repo');
     const localCliPath = join(packageRoot, 'dist', 'cli', 'index.js');
@@ -375,7 +383,9 @@ describe('config-io', () => {
 
     expect(result.success).toBe(true);
     const saved = JSON.parse(readFileSync(tuiPath, 'utf-8'));
-    expect(saved.plugin).toEqual([packageRoot]);
+    expect(saved.plugin).toEqual([
+      pathToFileURL(join(packageRoot, 'dist', 'index.js')).href,
+    ]);
   });
 
   test('addPluginToOpenCodeTuiConfig deduplicates existing local repo path entries', async () => {
@@ -391,7 +401,10 @@ describe('config-io', () => {
 
     expect(result.success).toBe(true);
     const saved = JSON.parse(readFileSync(tuiPath, 'utf-8'));
-    expect(saved.plugin).toEqual(['other', packageRoot]);
+    expect(saved.plugin).toEqual([
+      'other',
+      pathToFileURL(join(packageRoot, 'dist', 'index.js')).href,
+    ]);
   });
 
   test('addPluginToOpenCodeTuiConfig preserves non-string plugin entries when refreshing', async () => {
@@ -586,6 +599,38 @@ describe('config-io', () => {
     paths.ensureConfigDir();
     writePackageJson(packageRoot);
     writeFileSync(configPath, JSON.stringify({ plugin: [packageRoot] }));
+
+    const detected = detectCurrentConfig();
+
+    expect(detected.isInstalled).toBe(true);
+  });
+
+  test('detectCurrentConfig treats local entry URLs as installed', () => {
+    const configPath = join(tmpDir, 'opencode', 'opencode.json');
+    const packageRoot = join(tmpDir, 'repo');
+    paths.ensureConfigDir();
+    writePackageJson(packageRoot);
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        plugin: [pathToFileURL(join(packageRoot, 'dist', 'index.js')).href],
+      }),
+    );
+
+    const detected = detectCurrentConfig();
+
+    expect(detected.isInstalled).toBe(true);
+  });
+
+  test('detectCurrentConfig treats local package root URLs as installed', () => {
+    const configPath = join(tmpDir, 'opencode', 'opencode.json');
+    const packageRoot = join(tmpDir, 'repo');
+    paths.ensureConfigDir();
+    writePackageJson(packageRoot);
+    writeFileSync(
+      configPath,
+      JSON.stringify({ plugin: [pathToFileURL(packageRoot).href] }),
+    );
 
     const detected = detectCurrentConfig();
 
